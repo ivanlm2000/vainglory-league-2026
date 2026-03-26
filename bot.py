@@ -291,7 +291,7 @@ claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 RANKED_PROMPT = """Analiza esta captura de pantalla de resultado de Vainglory.
 
 Identifica:
-1. El equipo ganador (izquierda o derecha) — el equipo ganador tiene el indicador de victoria (crown/trophy/✓)
+1. El equipo ganador (izquierda o derecha) — el equipo ganador tiene el indicador de victoria (crown/trophy/✓) o dice "Victoria"
 2. Los nombres de TODOS los jugadores en ambos equipos (exactamente como aparecen)
 3. Si algún jugador tiene "Guest" en su nombre
 
@@ -304,14 +304,15 @@ Responde SOLO en este formato JSON exacto, sin texto extra:
 
 IMPORTANTE:
 - Los nombres deben ser EXACTOS como aparecen en la captura
-- "Guest" incluye cualquier variación como Guest_1234, Guest, etc.
+- Los nombres pueden tener prefijos como "1600_" o "1600-1_" — inclúyelos tal cual
+- "Guest" incluye cualquier variación como Guest_1234, Guest0, Guest, etc.
 - Si no puedes identificar el resultado claramente, responde: {"error": "No pude leer la captura"}
 """
 
 SCRIM_PROMPT = """Analiza esta captura de pantalla de resultado de Vainglory (scrim de equipos).
 
 Identifica:
-1. El equipo ganador (izquierda o derecha) — el equipo ganador tiene el indicador de victoria
+1. El equipo ganador (izquierda o derecha) — el equipo ganador tiene el indicador de victoria o dice "Victoria"
 2. Los nombres de TODOS los jugadores en ambos equipos (exactamente como aparecen)
 3. Si algún jugador tiene "Guest" en su nombre
 
@@ -336,7 +337,8 @@ async def analyze_screenshot(image_bytes, mode="ranked"):
     prompt = RANKED_PROMPT if mode == "ranked" else SCRIM_PROMPT
 
     try:
-        response = claude_client.messages.create(
+        response = await asyncio.to_thread(
+            claude_client.messages.create,
             model="claude-opus-4-5-20250514",
             max_tokens=1024,
             messages=[{
@@ -421,7 +423,7 @@ async def on_message(message):
         img_bytes = await image_attachment.read()
 
         # Analyze with Claude Vision
-        result = await asyncio.to_thread(analyze_screenshot, img_bytes, mode)
+        result = await analyze_screenshot(img_bytes, mode)
 
         if "error" in result:
             await processing_msg.edit(content=f"❌ {result['error']}")
@@ -442,7 +444,8 @@ async def on_message(message):
             team_b_names = ", ".join(loser_team)
 
             # Log scrim
-            log_scrim(
+            await asyncio.to_thread(
+                log_scrim,
                 "Equipo A", "Equipo B", "Equipo A",
                 team_a_names, team_b_names,
                 image_attachment.url
@@ -504,21 +507,21 @@ async def on_message(message):
             await processing_msg.edit(content="❌ No pude identificar a los jugadores. Verifica que los nombres sean correctos.")
             return
 
-        # Get or create players
-        w_result = get_player(winner_name)
+        # Get or create players (run in thread to not block)
+        w_result = await asyncio.to_thread(get_player, winner_name)
         if w_result:
             w_idx, w_data = w_result
         else:
-            create_player(winner_name)
-            w_result = get_player(winner_name)
+            await asyncio.to_thread(create_player, winner_name)
+            w_result = await asyncio.to_thread(get_player, winner_name)
             w_idx, w_data = w_result
 
-        l_result = get_player(loser_name)
+        l_result = await asyncio.to_thread(get_player, loser_name)
         if l_result:
             l_idx, l_data = l_result
         else:
-            create_player(loser_name)
-            l_result = get_player(loser_name)
+            await asyncio.to_thread(create_player, loser_name)
+            l_result = await asyncio.to_thread(get_player, loser_name)
             l_idx, l_data = l_result
 
         # Calculate new ELO
@@ -533,7 +536,7 @@ async def on_message(message):
         w_data["streak"] = max(1, w_data["streak"] + 1) if w_data["streak"] >= 0 else 1
         w_data["last_rival"] = loser_name
         w_data["last_match"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        update_player(w_idx, w_data)
+        await asyncio.to_thread(update_player, w_idx, w_data)
 
         # Update loser
         l_data["elo"] = new_l_elo
@@ -542,14 +545,15 @@ async def on_message(message):
         l_data["streak"] = min(-1, l_data["streak"] - 1) if l_data["streak"] <= 0 else -1
         l_data["last_rival"] = winner_name
         l_data["last_match"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        update_player(l_idx, l_data)
+        await asyncio.to_thread(update_player, l_idx, l_data)
 
         # Update H2H (skip if AFK)
         if not is_afk:
-            update_h2h(winner_name, loser_name, winner_name)
+            await asyncio.to_thread(update_h2h, winner_name, loser_name, winner_name)
 
         # Log match
-        log_match(
+        await asyncio.to_thread(
+            log_match,
             winner_name, loser_name,
             new_w_elo, new_l_elo,
             w_data["rank"], l_data["rank"],
@@ -594,7 +598,7 @@ async def on_message(message):
 
 @bot.tree.command(name="ranking", description="Top 10 jugadores por ELO")
 async def ranking_cmd(interaction: discord.Interaction):
-    players = get_top_players(10)
+    players = await asyncio.to_thread(get_top_players, 10)
     if not players:
         await interaction.response.send_message("No hay jugadores registrados aún.")
         return
@@ -615,7 +619,7 @@ async def ranking_cmd(interaction: discord.Interaction):
 @bot.tree.command(name="perfil", description="Ver perfil de un jugador")
 @app_commands.describe(jugador="Nombre del jugador")
 async def perfil_cmd(interaction: discord.Interaction, jugador: str):
-    result = get_player(jugador)
+    result = await asyncio.to_thread(get_player, jugador)
     if not result:
         await interaction.response.send_message(f"❌ No encontré a **{jugador}**. Verifica el nombre.")
         return
@@ -663,7 +667,7 @@ async def perfil_cmd(interaction: discord.Interaction, jugador: str):
 @bot.tree.command(name="vs", description="Récord entre dos jugadores")
 @app_commands.describe(jugador1="Primer jugador", jugador2="Segundo jugador")
 async def vs_cmd(interaction: discord.Interaction, jugador1: str, jugador2: str):
-    w1, w2 = get_h2h(jugador1, jugador2)
+    w1, w2 = await asyncio.to_thread(get_h2h, jugador1, jugador2)
     p1, p2 = sorted([jugador1.lower(), jugador2.lower()])
 
     if w1 == 0 and w2 == 0:
@@ -685,7 +689,7 @@ async def vs_cmd(interaction: discord.Interaction, jugador1: str, jugador2: str)
 
 @bot.tree.command(name="scrims", description="Tabla de resultados de scrims")
 async def scrims_cmd(interaction: discord.Interaction):
-    records = get_all_scrims()
+    records = await asyncio.to_thread(get_all_scrims)
     if not records:
         await interaction.response.send_message("No hay scrims registrados aún.")
         return
@@ -716,7 +720,7 @@ async def anular_cmd(interaction: discord.Interaction, jugador: str, razon: str)
         await interaction.response.send_message("❌ Solo administradores pueden usar este comando.", ephemeral=True)
         return
 
-    result = revert_last_match(jugador)
+    result = await asyncio.to_thread(revert_last_match, jugador)
     if result:
         winner, loser = result
         embed = discord.Embed(
