@@ -1,8 +1,8 @@
 """
-León Coach League — Discord Bot v6
+León Coach League — Discord Bot v8
 Vainglory ranked + scrims tracker
 Claude Vision + Google Sheets
-Bilingual EN/ES
+Bilingual EN/ES | Admin swap button
 """
 
 import os
@@ -16,6 +16,7 @@ from datetime import datetime
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord.ui import Button, View
 import gspread
 from google.oauth2.service_account import Credentials
 import anthropic
@@ -47,7 +48,6 @@ TIERS = [
 # ─── HELPERS ──────────────────────────────────────────────────────────────────
 
 def clean_name(raw_name):
-    """Remove tier prefix from name. 1600_ivan -> ivan, 1800-2_Zeke -> Zeke, FeelinLucky -> FeelinLucky"""
     cleaned = re.sub(r'^\d+(-\d+)?_', '', raw_name)
     return cleaned if cleaned else raw_name
 
@@ -120,8 +120,6 @@ ws_scrim_log = spreadsheet.worksheet("ScrimLog")
 ws_scrim_h2h = spreadsheet.worksheet("ScrimH2H")
 
 
-# ── Players (Ranked) ──
-
 def get_player(name):
     records = ws_players.get_all_values()
     for i, row in enumerate(records[1:], start=2):
@@ -145,8 +143,6 @@ def update_player(row_idx, data):
         data["losses"], data["streak"], data["last_rival"], data["last_match"]
     ]])
 
-
-# ── Scrim Players ──
 
 def get_scrim_player(name):
     records = ws_scrim_players.get_all_values()
@@ -172,9 +168,7 @@ def update_scrim_player(row_idx, data):
     ]])
 
 
-# ── H2H (shared logic for both sheets) ──
-
-def update_h2h(ws, player1, player2, winner_name):
+def update_h2h_sheet(ws, player1, player2, winner_name):
     records = ws.get_all_values()
     p1, p2 = sorted([player1.lower(), player2.lower()])
     for i, row in enumerate(records[1:], start=2):
@@ -192,6 +186,21 @@ def update_h2h(ws, player1, player2, winner_name):
     ws.append_row([p1, p2, w1, w2])
 
 
+def revert_h2h_sheet(ws, player1, player2, winner_name):
+    records = ws.get_all_values()
+    p1, p2 = sorted([player1.lower(), player2.lower()])
+    for i, row in enumerate(records[1:], start=2):
+        if row[0].lower() == p1 and row[1].lower() == p2:
+            w1 = int(row[2]) if row[2] else 0
+            w2 = int(row[3]) if row[3] else 0
+            if winner_name.lower() == p1:
+                w1 = max(0, w1 - 1)
+            else:
+                w2 = max(0, w2 - 1)
+            ws.update(f"C{i}:D{i}", [[w1, w2]])
+            return
+
+
 def get_h2h_record(ws, player1, player2):
     records = ws.get_all_values()
     p1, p2 = sorted([player1.lower(), player2.lower()])
@@ -201,25 +210,17 @@ def get_h2h_record(ws, player1, player2):
     return 0, 0
 
 
-# ── Logging ──
-
 def log_ranked(raw_winners, raw_losers, elo_changes, afk_players, capture_url):
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
-    ws_ranked_log.append_row([
-        fecha, ", ".join(raw_winners), ", ".join(raw_losers),
-        json.dumps(elo_changes), ", ".join(afk_players) if afk_players else "No", capture_url
-    ])
+    ws_ranked_log.append_row([fecha, ", ".join(raw_winners), ", ".join(raw_losers),
+        json.dumps(elo_changes), ", ".join(afk_players) if afk_players else "No", capture_url])
 
 
 def log_scrim(raw_winners, raw_losers, afk_players, capture_url):
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
-    ws_scrim_log.append_row([
-        fecha, ", ".join(raw_winners), ", ".join(raw_losers),
-        ", ".join(afk_players) if afk_players else "No", capture_url
-    ])
+    ws_scrim_log.append_row([fecha, ", ".join(raw_winners), ", ".join(raw_losers),
+        ", ".join(afk_players) if afk_players else "No", capture_url])
 
-
-# ── Rankings ──
 
 def get_top_ranked(n=10):
     records = ws_players.get_all_values()
@@ -253,30 +254,33 @@ def get_top_scrims(n=10):
 
 claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-VISION_PROMPT = """Analyze this Vainglory match result screenshot.
+VISION_PROMPT = """Analyze this Vainglory match result screenshot. There are two teams: LEFT (3 players on the left) and RIGHT (3 players on the right).
 
-Identify:
-1. The winning team and the losing team:
-   - "Victory" (blue) or "Victoria" (blue) = left team WON
-   - "Defeat" (red) or "Derrota" (red) = left team LOST
-   - "Surrender"/"Rendición": BLUE text = left team won, RED text = left team lost
-2. ALL player names (3 per team, exactly as they appear)
-3. AFK players: their name is crossed out and their character appears faded/darker
+STEP 1 — Determine the winner:
+In the center there is a word between two kill counts.
+- "Victory" / "Victoria" → LEFT team WON
+- "Defeat" / "Derrota" → LEFT team LOST (right won)
+- "Surrender" / "Rendición" → Use kill counts: team with MORE kills WON
 
-Respond ONLY in this exact JSON format, no extra text:
+STEP 2 — Read ALL 6 player names exactly as shown.
+
+STEP 3 — Check for AFK (name crossed out, character faded).
+
+Respond ONLY in JSON:
 {
-    "winner_team": ["name1", "name2", "name3"],
-    "loser_team": ["name1", "name2", "name3"],
+    "left_team": ["name1", "name2", "name3"],
+    "right_team": ["name1", "name2", "name3"],
+    "left_kills": 25,
+    "right_kills": 5,
+    "winner": "left" or "right",
+    "center_word": "the word shown",
     "afk_players": [],
     "has_guests": false
 }
 
-IMPORTANT:
-- Names must be EXACT as shown in the screenshot
-- Names may have prefixes like "1600_", "1600-1_", "1800_", "1800-2_" — include them exactly
-- "Guest" includes Guest_1234, Guest0, Guest0-Top25, etc.
-- afk_players is an array of AFK player names (can be empty [])
-- If you cannot identify the result, respond: {"error": "Could not read screenshot / No pude leer la captura"}
+Names must be EXACT including prefixes like "1600_", "1800-2_", "5656-1_".
+Guest includes Guest_1234, Guest0, etc.
+If unreadable: {"error": "Could not read / No pude leer"}
 """
 
 
@@ -285,9 +289,7 @@ async def analyze_screenshot(image_bytes):
     b64 = base64.b64encode(compressed_bytes).decode("utf-8")
     try:
         response = await asyncio.to_thread(
-            claude_client.messages.create,
-            model="claude-sonnet-4-20250514",
-            max_tokens=1024,
+            claude_client.messages.create, model="claude-sonnet-4-20250514", max_tokens=1024,
             messages=[{"role": "user", "content": [
                 {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
                 {"type": "text", "text": VISION_PROMPT},
@@ -299,7 +301,29 @@ async def analyze_screenshot(image_bytes):
             if text.startswith("json"):
                 text = text[4:]
             text = text.strip()
-        return json.loads(text)
+        data = json.loads(text)
+        if "error" in data:
+            return data
+
+        winner_side = data.get("winner", "left")
+        left_team = data.get("left_team", [])
+        right_team = data.get("right_team", [])
+        left_kills = data.get("left_kills", 0)
+        right_kills = data.get("right_kills", 0)
+        center = data.get("center_word", "").lower()
+
+        if "surr" in center or "rend" in center:
+            if left_kills > right_kills:
+                winner_side = "left"
+            elif right_kills > left_kills:
+                winner_side = "right"
+
+        if winner_side == "left":
+            return {"winner_team": left_team, "loser_team": right_team,
+                    "afk_players": data.get("afk_players", []), "has_guests": data.get("has_guests", False)}
+        else:
+            return {"winner_team": right_team, "loser_team": left_team,
+                    "afk_players": data.get("afk_players", []), "has_guests": data.get("has_guests", False)}
     except Exception as e:
         return {"error": f"Error: {str(e)}"}
 
@@ -311,16 +335,14 @@ async def process_ranked(winner_team, loser_team, afk_players, capture_url):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     elo_changes = {}
 
-    # Separate raw names (for log) and clean names (for players/h2h)
     raw_winners = [p for p in winner_team if "guest" not in p.lower()]
     raw_losers = [p for p in loser_team if "guest" not in p.lower()]
     clean_winners = [clean_name(p) for p in raw_winners]
     clean_losers = [clean_name(p) for p in raw_losers]
 
     if not clean_winners or not clean_losers:
-        return None, "No valid players found / No se encontraron jugadores válidos."
+        return None, "No valid players / No se encontraron jugadores válidos."
 
-    # Get or create all players
     player_data = {}
     for name in clean_winners + clean_losers:
         result = await asyncio.to_thread(get_player, name)
@@ -329,12 +351,10 @@ async def process_ranked(winner_team, loser_team, afk_players, capture_url):
             result = await asyncio.to_thread(get_player, name)
         player_data[name] = result
 
-    # Calculate ELO change based on team averages
     avg_w = sum(player_data[p][1]["elo"] for p in clean_winners) / len(clean_winners)
     avg_l = sum(player_data[p][1]["elo"] for p in clean_losers) / len(clean_losers)
     elo_gain, elo_loss = calc_elo(avg_w, avg_l)
 
-    # Update winners
     for name in clean_winners:
         idx, data = player_data[name]
         old_elo = data["elo"]
@@ -346,7 +366,6 @@ async def process_ranked(winner_team, loser_team, afk_players, capture_url):
         elo_changes[name] = {"old": old_elo, "new": data["elo"], "diff": data["elo"] - old_elo}
         await asyncio.to_thread(update_player, idx, data)
 
-    # Update losers
     for name in clean_losers:
         idx, data = player_data[name]
         old_elo = data["elo"]
@@ -361,15 +380,56 @@ async def process_ranked(winner_team, loser_team, afk_players, capture_url):
             elo_changes[name] = {"old": old_elo, "new": data["elo"], "diff": data["elo"] - old_elo}
             await asyncio.to_thread(update_player, idx, data)
 
-    # H2H: each winner vs each non-AFK loser (clean names)
     for w in clean_winners:
         for l in clean_losers:
             if l.lower() not in afk_set:
-                await asyncio.to_thread(update_h2h, ws_h2h, w, l, w)
+                await asyncio.to_thread(update_h2h_sheet, ws_h2h, w, l, w)
 
-    # Log with RAW names
     await asyncio.to_thread(log_ranked, raw_winners, raw_losers, elo_changes, afk_players, capture_url)
     return elo_changes, None
+
+
+async def revert_ranked(clean_winners, clean_losers, afk_players):
+    """Revert a ranked match — undo ELO, wins/losses, H2H."""
+    afk_set = {p.lower() for p in afk_players}
+
+    player_data = {}
+    for name in clean_winners + clean_losers:
+        result = await asyncio.to_thread(get_player, name)
+        if result:
+            player_data[name] = result
+
+    if not player_data:
+        return
+
+    avg_w = sum(player_data[p][1]["elo"] for p in clean_winners if p in player_data) / max(len(clean_winners), 1)
+    avg_l = sum(player_data[p][1]["elo"] for p in clean_losers if p in player_data) / max(len(clean_losers), 1)
+    elo_gain, elo_loss = calc_elo(avg_w, avg_l)
+
+    for name in clean_winners:
+        if name not in player_data:
+            continue
+        idx, data = player_data[name]
+        data["elo"] = max(MIN_ELO, data["elo"] - elo_gain)
+        data["rank"] = get_rank(data["elo"])
+        data["wins"] = max(0, data["wins"] - 1)
+        data["streak"] = 0
+        await asyncio.to_thread(update_player, idx, data)
+
+    for name in clean_losers:
+        if name not in player_data or name.lower() in afk_set:
+            continue
+        idx, data = player_data[name]
+        data["elo"] = min(MAX_ELO, data["elo"] + elo_loss)
+        data["rank"] = get_rank(data["elo"])
+        data["losses"] = max(0, data["losses"] - 1)
+        data["streak"] = 0
+        await asyncio.to_thread(update_player, idx, data)
+
+    for w in clean_winners:
+        for l in clean_losers:
+            if l.lower() not in afk_set:
+                await asyncio.to_thread(revert_h2h_sheet, ws_h2h, w, l, w)
 
 
 # ─── PROCESS SCRIMS ──────────────────────────────────────────────────────────
@@ -410,9 +470,125 @@ async def process_scrims(winner_team, loser_team, afk_players, capture_url):
     for w in clean_winners:
         for l in clean_losers:
             if l.lower() not in afk_set:
-                await asyncio.to_thread(update_h2h, ws_scrim_h2h, w, l, w)
+                await asyncio.to_thread(update_h2h_sheet, ws_scrim_h2h, w, l, w)
 
     await asyncio.to_thread(log_scrim, raw_winners, raw_losers, afk_players, capture_url)
+
+
+async def revert_scrims(clean_winners, clean_losers, afk_players):
+    afk_set = {p.lower() for p in afk_players}
+
+    for name in clean_winners:
+        result = await asyncio.to_thread(get_scrim_player, name)
+        if not result:
+            continue
+        idx, data = result
+        data["wins"] = max(0, data["wins"] - 1)
+        data["streak"] = 0
+        await asyncio.to_thread(update_scrim_player, idx, data)
+
+    for name in clean_losers:
+        if name.lower() in afk_set:
+            continue
+        result = await asyncio.to_thread(get_scrim_player, name)
+        if not result:
+            continue
+        idx, data = result
+        data["losses"] = max(0, data["losses"] - 1)
+        data["streak"] = 0
+        await asyncio.to_thread(update_scrim_player, idx, data)
+
+    for w in clean_winners:
+        for l in clean_losers:
+            if l.lower() not in afk_set:
+                await asyncio.to_thread(revert_h2h_sheet, ws_scrim_h2h, w, l, w)
+
+
+# ─── SWAP BUTTON ──────────────────────────────────────────────────────────────
+
+class SwapView(View):
+    def __init__(self, winner_team, loser_team, afk_players, capture_url, mode, submitter):
+        super().__init__(timeout=300)
+        self.winner_team = winner_team
+        self.loser_team = loser_team
+        self.afk_players = afk_players
+        self.capture_url = capture_url
+        self.mode = mode
+        self.submitter = submitter
+        self.swapped = False
+
+    @discord.ui.button(label="🔄 Swap / Invertir", style=discord.ButtonStyle.secondary)
+    async def swap_button(self, interaction: discord.Interaction, button: Button):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Admins only / Solo admins.", ephemeral=True)
+            return
+
+        if self.swapped:
+            await interaction.response.send_message("⚠️ Already swapped / Ya se invirtió.", ephemeral=True)
+            return
+
+        self.swapped = True
+        button.disabled = True
+        button.label = "✅ Swapped / Invertido"
+
+        await interaction.response.defer()
+
+        # Get clean names
+        clean_old_winners = [clean_name(p) for p in self.winner_team if "guest" not in p.lower()]
+        clean_old_losers = [clean_name(p) for p in self.loser_team if "guest" not in p.lower()]
+        clean_afk = [clean_name(p) for p in self.afk_players]
+
+        # Revert original
+        if self.mode == "ranked":
+            await revert_ranked(clean_old_winners, clean_old_losers, clean_afk)
+        else:
+            await revert_scrims(clean_old_winners, clean_old_losers, clean_afk)
+
+        # Swap teams
+        self.winner_team, self.loser_team = self.loser_team, self.winner_team
+
+        # Process with swapped teams
+        if self.mode == "ranked":
+            elo_changes, error = await process_ranked(self.winner_team, self.loser_team, self.afk_players, self.capture_url)
+            if error:
+                await interaction.followup.send(f"❌ {error}")
+                return
+
+            embed = discord.Embed(title="🏆 Ranked match registered (CORRECTED) / Partida ranked registrada (CORREGIDA)", color=0x00FF88)
+
+            winner_lines = []
+            for raw in self.winner_team:
+                if "guest" in raw.lower():
+                    continue
+                name = clean_name(raw)
+                ch = elo_changes.get(name, {})
+                winner_lines.append(f"**{name}**\n{ch.get('old', 0)} → {ch.get('new', 0)} (+{ch.get('diff', 0)}) | {get_rank(ch.get('new', STARTING_ELO))}")
+
+            loser_lines = []
+            for raw in self.loser_team:
+                if "guest" in raw.lower():
+                    continue
+                name = clean_name(raw)
+                ch = elo_changes.get(name, {})
+                if ch.get("afk"):
+                    loser_lines.append(f"**{name}** ⚠️ AFK\n{ch.get('old', 0)} (no change / sin cambio)")
+                else:
+                    loser_lines.append(f"**{name}**\n{ch.get('old', 0)} → {ch.get('new', 0)} ({ch.get('diff', 0)}) | {get_rank(ch.get('new', STARTING_ELO))}")
+
+            embed.add_field(name="👑 Winners / Ganadores", value="\n\n".join(winner_lines) if winner_lines else "—", inline=True)
+            embed.add_field(name="💀 Losers / Perdedores", value="\n\n".join(loser_lines) if loser_lines else "—", inline=True)
+
+        else:
+            await process_scrims(self.winner_team, self.loser_team, self.afk_players, self.capture_url)
+            embed = discord.Embed(title="⚔️ Scrim registered (CORRECTED) / Scrim registrado (CORREGIDO)", color=0xFFD700)
+            w_names = "\n".join([f"**{clean_name(p)}**" for p in self.winner_team if "guest" not in p.lower()])
+            l_names = "\n".join([f"**{clean_name(p)}**" for p in self.loser_team if "guest" not in p.lower()])
+            embed.add_field(name="🏆 Winners / Ganadores", value=w_names or "—", inline=True)
+            embed.add_field(name="💀 Losers / Perdedores", value=l_names or "—", inline=True)
+
+        embed.set_thumbnail(url=self.capture_url)
+        embed.set_footer(text=f"Corrected by / Corregido por {interaction.user.display_name}")
+        await interaction.edit_original_response(embed=embed, view=self)
 
 
 # ─── DISCORD BOT ──────────────────────────────────────────────────────────────
@@ -468,14 +644,13 @@ async def on_message(message):
         afk_players = result.get("afk_players", [])
         has_guests = result.get("has_guests", False)
 
-        # ── SCRIM ──
+        swap_view = SwapView(winner_team, loser_team, afk_players, image_attachment.url, mode, submitter)
+
         if mode == "scrim":
             if has_guests:
-                await processing_msg.edit(content="❌ Invalid scrim: no Guests allowed.\nScrim inválido: no se permiten Guests.")
+                await processing_msg.edit(content="❌ Invalid scrim: no Guests.\nScrim inválido: sin Guests.")
                 return
-
             await process_scrims(winner_team, loser_team, afk_players, image_attachment.url)
-
             embed = discord.Embed(title="⚔️ Scrim registered / Scrim registrado", color=0xFFD700)
             w_names = "\n".join([f"**{clean_name(p)}**" for p in winner_team if "guest" not in p.lower()])
             l_names = "\n".join([f"**{clean_name(p)}**" for p in loser_team if "guest" not in p.lower()])
@@ -485,12 +660,10 @@ async def on_message(message):
                 embed.add_field(name="⚠️ AFK", value=", ".join([clean_name(p) for p in afk_players]), inline=False)
             embed.set_footer(text=f"By / Por {submitter}")
             embed.set_thumbnail(url=image_attachment.url)
-            await processing_msg.edit(content=None, embed=embed)
+            await processing_msg.edit(content=None, embed=embed, view=swap_view)
             return
 
-        # ── RANKED ──
         elo_changes, error = await process_ranked(winner_team, loser_team, afk_players, image_attachment.url)
-
         if error:
             await processing_msg.edit(content=f"❌ {error}")
             return
@@ -525,7 +698,7 @@ async def on_message(message):
 
         embed.set_thumbnail(url=image_attachment.url)
         embed.set_footer(text=f"By / Por {submitter}")
-        await processing_msg.edit(content=None, embed=embed)
+        await processing_msg.edit(content=None, embed=embed, view=swap_view)
 
     except Exception as e:
         await processing_msg.edit(content=f"❌ Error: {str(e)}")
@@ -609,9 +782,9 @@ async def vs_cmd(interaction: discord.Interaction, jugador1: str, jugador2: str)
         return
     embed = discord.Embed(title=f"⚔️ {p1} vs {p2}", color=0xFF6600)
     if rw1 > 0 or rw2 > 0:
-        embed.add_field(name="🎮 Ranked", value=f"**{p1}**: {rw1}W\n**{p2}**: {rw2}W\n{rw1+rw2} matches / partidas", inline=True)
+        embed.add_field(name="🎮 Ranked", value=f"**{p1}**: {rw1}W\n**{p2}**: {rw2}W\n{rw1+rw2} matches", inline=True)
     if sw1 > 0 or sw2 > 0:
-        embed.add_field(name="⚔️ Scrims", value=f"**{p1}**: {sw1}W\n**{p2}**: {sw2}W\n{sw1+sw2} matches / partidas", inline=True)
+        embed.add_field(name="⚔️ Scrims", value=f"**{p1}**: {sw1}W\n**{p2}**: {sw2}W\n{sw1+sw2} matches", inline=True)
     await interaction.response.send_message(embed=embed)
 
 
@@ -621,7 +794,7 @@ async def anular_cmd(interaction: discord.Interaction, jugador: str, razon: str)
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Admins only / Solo admins.", ephemeral=True)
         return
-    await interaction.response.send_message(f"⚠️ Manual fix needed in Google Sheets / Ajuste manual en Sheets.\nPlayer / Jugador: **{jugador}** | Reason / Razón: {razon}")
+    await interaction.response.send_message(f"⚠️ Use the 🔄 Swap button on the match, or fix manually in Sheets.\nUsa el botón 🔄 Swap en la partida, o ajusta manualmente en Sheets.\nPlayer / Jugador: **{jugador}** | Reason / Razón: {razon}")
 
 
 if __name__ == "__main__":
