@@ -296,6 +296,8 @@ async def process_ranked(winner_team, loser_team, afk_players, capture_url):
     avg_w = sum(pd[p][1]["elo"] for p in cw) / len(cw)
     avg_l = sum(pd[p][1]["elo"] for p in cl) / len(cl)
     eg, el = calc_elo(avg_w, avg_l)
+
+    # Ganadores: siempre ganan ELO
     for name in cw:
         idx, data = pd[name]
         old = data["elo"]
@@ -307,6 +309,10 @@ async def process_ranked(winner_team, loser_team, afk_players, capture_url):
         data["last_rival"] = ", ".join(cl)
         elo_changes[name] = {"old": old, "new": data["elo"], "diff": data["elo"] - old}
         await asyncio.to_thread(update_player, idx, data)
+
+    # ¿Hubo AFK en el equipo perdedor?
+    afk_en_perdedores = any(n.lower() in afk_set for n in cl)
+
     for name in cl:
         idx, data = pd[name]
         old = data["elo"]
@@ -314,15 +320,23 @@ async def process_ranked(winner_team, loser_team, afk_players, capture_url):
         data["streak"] = min(-1, data["streak"] - 1) if data["streak"] <= 0 else -1
         data["last_match"] = now
         data["last_rival"] = ", ".join(cw)
+
         if name.lower() in afk_set:
-            # AFK: sí pierde ELO
+            # Se fue AFK: pierde ELO
             data["elo"] = max(MIN_ELO, old - el)
             data["rank"] = get_rank(data["elo"])
             elo_changes[name] = {"old": old, "new": data["elo"], "diff": data["elo"] - old, "afk": True}
-        else:
-            # Jugó normal: protegido, no pierde ELO
+        elif afk_en_perdedores:
+            # Se quedó jugando con AFK en su equipo: protegido, no pierde ELO
             elo_changes[name] = {"old": old, "new": old, "diff": 0, "protected": True}
+        else:
+            # Derrota normal sin AFK: pierde ELO
+            data["elo"] = max(MIN_ELO, old - el)
+            data["rank"] = get_rank(data["elo"])
+            elo_changes[name] = {"old": old, "new": data["elo"], "diff": data["elo"] - old}
+
         await asyncio.to_thread(update_player, idx, data)
+
     for w in cw:
         for l in cl:
             await asyncio.to_thread(update_h2h_sheet, ws_h2h, w, l, w)
@@ -339,6 +353,7 @@ async def revert_ranked(clean_winners, clean_losers, afk_players):
     avg_w = sum(pd[p][1]["elo"] for p in clean_winners if p in pd) / max(len([p for p in clean_winners if p in pd]), 1)
     avg_l = sum(pd[p][1]["elo"] for p in clean_losers if p in pd) / max(len([p for p in clean_losers if p in pd]), 1)
     eg, el = calc_elo(avg_w, avg_l)
+    afk_en_perdedores = any(n.lower() in afk_set for n in clean_losers)
     for name in clean_winners:
         if name not in pd: continue
         idx, data = pd[name]
@@ -355,6 +370,10 @@ async def revert_ranked(clean_winners, clean_losers, afk_players):
         if name.lower() in afk_set:
             data["elo"] = min(MAX_ELO, data["elo"] + el)
             data["rank"] = get_rank(data["elo"])
+        elif not afk_en_perdedores:
+            data["elo"] = min(MAX_ELO, data["elo"] + el)
+            data["rank"] = get_rank(data["elo"])
+        # Si era protegido (afk_en_perdedores pero no era afk) no se toca el ELO
         await asyncio.to_thread(update_player, idx, data)
     for w in clean_winners:
         for l in clean_losers:
@@ -570,7 +589,7 @@ async def on_message(message):
         await proc.edit(content=None, embed=embed, view=view)
     except Exception as e:
         await proc.edit(content=f"❌ Error: {str(e)}")
-    await bot.process_commands(message)
+    # Sin process_commands al final — evita el doble disparo
 
 @bot.tree.command(name="ranking", description="Top 10 ranked ELO")
 async def ranking_cmd(interaction: discord.Interaction):
