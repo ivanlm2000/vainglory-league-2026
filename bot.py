@@ -679,4 +679,5 @@
       await interaction.response.send_message("Use the buttons on each match:\n🔄 **Swap** = invert winners/losers\n🗑️  **Delete** = remove match\n\nUsa los botones en cada partida:\n🔄 **Swap** = invertir\n🗑️  **Delete** = eliminar", ephemeral=True)
                                                                                                                                                                                                                                                                                
   if __name__ == "__main__":                                                                                                                                                                                                                                                   
-      bot.run(DISCORD_TOKEN)   
+      bot.run(DISCORD_TOKEN)                                                                                                                                                                                                                                                   
+                            
