@@ -1,5 +1,5 @@
 """
-León Coach League — Discord Bot v10
+León Coach League — Discord Bot v11
 Vainglory ranked + scrims tracker
 Claude Vision + Google Sheets
 Bilingual EN/ES | Admin swap + delete buttons (permanent, silent)
@@ -77,18 +77,39 @@ def compress_image(image_bytes, max_size_mb=3.5):
         return image_bytes, "image/png"
     img = Image.open(io.BytesIO(image_bytes))
     if img.mode == "RGBA": img = img.convert("RGB")
-    if max(img.size) > 2000:
-        r = 2000 / max(img.size)
+    if max(img.size) > 1800:
+        r = 1800 / max(img.size)
         img = img.resize((int(img.width * r), int(img.height * r)), Image.LANCZOS)
-    for q in [85, 70, 55, 40]:
+    for q in [80, 65, 50, 35]:
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=q)
         if len(buf.getvalue()) <= max_bytes:
             return buf.getvalue(), "image/jpeg"
-    img = img.resize((int(img.width * 0.5), int(img.height * 0.5)), Image.LANCZOS)
+    img = img.resize((int(img.width * 0.4), int(img.height * 0.4)), Image.LANCZOS)
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=50)
+    img.save(buf, format="JPEG", quality=40)
     return buf.getvalue(), "image/jpeg"
+
+def extract_json(text):
+    """Extract JSON from text that might contain extra content."""
+    text = text.strip()
+    if text.startswith("```"):
+        parts = text.split("```")
+        if len(parts) >= 2:
+            text = parts[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+    match = re.search(r'\{[\s\S]*\}', text)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
 
 # ─── GOOGLE SHEETS ────────────────────────────────────────────────────────────
 
@@ -220,21 +241,14 @@ Center of screen shows a word between two kill counts.
 STEP 2 — Read ALL 6 player names exactly as shown.
 STEP 3 — Check for AFK (name crossed out, character faded).
 
-Respond ONLY in JSON:
-{
-    "left_team": ["name1", "name2", "name3"],
-    "right_team": ["name1", "name2", "name3"],
-    "left_kills": 25,
-    "right_kills": 5,
-    "winner": "left" or "right",
-    "center_word": "the word shown",
-    "afk_players": [],
-    "has_guests": false
-}
+You MUST respond with ONLY a JSON object, nothing else. No explanation, no text before or after:
+{"left_team":["name1","name2","name3"],"right_team":["name1","name2","name3"],"left_kills":25,"right_kills":5,"winner":"left","center_word":"Defeat","afk_players":[],"has_guests":false}
 
-Names must be EXACT including prefixes like "1600_", "1800-2_", "5656-1_".
-Guest includes Guest_1234, Guest0, etc.
-If unreadable: {"error": "Could not read / No pude leer"}
+Rules:
+- Names EXACT including prefixes like "1600_", "1800-2_", "5656-1_"
+- Guest includes Guest_1234, Guest0, etc
+- winner must be "left" or "right"
+- If unreadable respond ONLY: {"error":"Could not read"}
 """
 
 async def analyze_screenshot(image_bytes):
@@ -247,12 +261,11 @@ async def analyze_screenshot(image_bytes):
                 {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
                 {"type": "text", "text": VISION_PROMPT}]}])
         text = response.content[0].text.strip()
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"): text = text[4:]
-            text = text.strip()
-        data = json.loads(text)
-        if "error" in data: return data
+        data = extract_json(text)
+        if data is None:
+            return {"error": f"Could not parse response / No pude interpretar la respuesta"}
+        if "error" in data:
+            return data
         winner_side = data.get("winner", "left")
         left = data.get("left_team", [])
         right = data.get("right_team", [])
@@ -475,13 +488,10 @@ class MatchView(View):
         self.acted = True
         for c in self.children: c.disabled = True
         await interaction.response.defer()
-
         cw, cl, ca = self.get_clean()
         if self.mode == "ranked": await revert_ranked(cw, cl, ca)
         else: await revert_scrims(cw, cl, ca)
-
         self.winner_team, self.loser_team = self.loser_team, self.winner_team
-
         if self.mode == "ranked":
             self.elo_changes, _ = await process_ranked(self.winner_team, self.loser_team, self.afk_players, self.capture_url)
             embed = build_ranked_embed(self.winner_team, self.loser_team, self.elo_changes,
@@ -503,11 +513,9 @@ class MatchView(View):
         self.acted = True
         for c in self.children: c.disabled = True
         await interaction.response.defer()
-
         cw, cl, ca = self.get_clean()
         if self.mode == "ranked": await revert_ranked(cw, cl, ca)
         else: await revert_scrims(cw, cl, ca)
-
         embed = discord.Embed(title="🗑️ Match removed / Partida eliminada", color=0x666666)
         embed.set_thumbnail(url=self.capture_url)
         await interaction.edit_original_response(embed=embed, view=self)
@@ -543,23 +551,19 @@ async def on_message(message):
     if not img_att:
         await bot.process_commands(message)
         return
-
     mode = "ranked" if ch_name == RANKED_CHANNEL else "scrim"
     submitter = message.author.display_name
     proc = await message.reply("🔍 Analyzing / Analizando...")
-
     try:
         img_bytes = await img_att.read()
         result = await analyze_screenshot(img_bytes)
         if "error" in result:
             await proc.edit(content=f"❌ {result['error']}")
             return
-
         wt = result["winner_team"]
         lt = result["loser_team"]
         afk = result.get("afk_players", [])
         guests = result.get("has_guests", False)
-
         if mode == "scrim":
             if guests:
                 await proc.edit(content="❌ Invalid scrim: no Guests / Sin Guests.")
@@ -569,7 +573,6 @@ async def on_message(message):
             view = MatchView(wt, lt, afk, img_att.url, mode, submitter)
             await proc.edit(content=None, embed=embed, view=view)
             return
-
         elo_changes, error = await process_ranked(wt, lt, afk, img_att.url)
         if error:
             await proc.edit(content=f"❌ {error}")
@@ -577,7 +580,6 @@ async def on_message(message):
         embed = build_ranked_embed(wt, lt, elo_changes, img_att.url, f"By / Por {submitter}")
         view = MatchView(wt, lt, afk, img_att.url, mode, submitter, elo_changes)
         await proc.edit(content=None, embed=embed, view=view)
-
     except Exception as e:
         await proc.edit(content=f"❌ Error: {str(e)}")
     await bot.process_commands(message)
@@ -660,12 +662,12 @@ async def vs_cmd(interaction: discord.Interaction, jugador1: str, jugador2: str)
         embed.add_field(name="⚔️ Scrims", value=f"**{p1}**: {sw1}W\n**{p2}**: {sw2}W\n{sw1+sw2} matches", inline=True)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="anular", description="[Admin] Info about match controls")
+@bot.tree.command(name="anular", description="[Admin] Match control info")
 async def anular_cmd(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Admins only / Solo admins.", ephemeral=True)
         return
-    await interaction.response.send_message("Use the buttons on each match result:\n🔄 **Swap** = invert winners/losers\n🗑️ **Delete** = remove match completely\n\nUsa los botones en cada resultado:\n🔄 **Swap** = invertir ganadores/perdedores\n🗑️ **Delete** = eliminar partida", ephemeral=True)
+    await interaction.response.send_message("Use the buttons on each match:\n🔄 **Swap** = invert winners/losers\n🗑️ **Delete** = remove match\n\nUsa los botones en cada partida:\n🔄 **Swap** = invertir\n🗑️ **Delete** = eliminar", ephemeral=True)
 
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
