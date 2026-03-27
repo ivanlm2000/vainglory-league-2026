@@ -1,608 +1,734 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Vainglory League — Rankings</title>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-<style>
-:root {
-  --bg: #0a0a0f;
-  --bg2: #12121a;
-  --bg3: #1a1a26;
-  --gold: #d4a843;
-  --gold-dim: #a8842f;
-  --silver: #9a9a9a;
-  --bronze: #b07340;
-  --green: #4ade80;
-  --red: #f87171;
-  --text: #e8e6df;
-  --text2: #989690;
-  --text3: #5c5b57;
-  --border: rgba(255,255,255,0.06);
-}
+                                                                                                                                                                                                                                                                               
+⏺ <!DOCTYPE html>                                                                                                                                                                                                                                                            
+  <html lang="en">                                                                                                                                                                                                                                                             
+  <head>                                                                                                                                                                                                                                                                       
+  <meta charset="UTF-8">                                                                                                                                                                                                                                                       
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">                                                                                                                                                                                                       
+  <title>Vainglory League — Rankings</title>                                                                                                                                                                                                                                   
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>                                                                                                                                                                                                                                                                      
+  :root {                                                   
+    --bg: #0a0a0f;                                                                                                                                                                                                                                                             
+    --bg2: #12121a;                                                                                                                                                                                                                                                            
+    --bg3: #1a1a26;
+    --gold: #d4a843;                                                                                                                                                                                                                                                           
+    --gold-dim: #a8842f;                                                                                                                                                                                                                                                       
+    --silver: #9a9a9a;
+    --bronze: #b07340;                                                                                                                                                                                                                                                         
+    --green: #4ade80;                                       
+    --red: #f87171;                                                                                                                                                                                                                                                            
+    --text: #e8e6df;                                        
+    --text2: #989690;                                                                                                                                                                                                                                                          
+    --text3: #5c5b57;                                                                                                                                                                                                                                                          
+    --border: rgba(255,255,255,0.06);
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  * { margin: 0; padding: 0; box-sizing: border-box; }                                                                                                                                                                                                                         
+                                                            
+  body {                                                                                                                                                                                                                                                                       
+    font-family: 'Outfit', sans-serif;                      
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }                                                                                                                                                                                                                                                                            
+   
+  .bg-glow {                                                                                                                                                                                                                                                                   
+    position: fixed;                                        
+    top: -200px;
+    left: 50%;
+    transform: translateX(-50%);                                                                                                                                                                                                                                               
+    width: 600px;
+    height: 600px;                                                                                                                                                                                                                                                             
+    background: radial-gradient(circle, rgba(212,168,67,0.08) 0%, transparent 70%);
+    pointer-events: none;                                                                                                                                                                                                                                                      
+    z-index: 0;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  .container {                                                                                                                                                                                                                                                                 
+    max-width: 680px;
+    margin: 0 auto;                                                                                                                                                                                                                                                            
+    padding: 2rem 1.25rem;                                  
+    position: relative;                                                                                                                                                                                                                                                        
+    z-index: 1;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  .header {
+    text-align: center;
+    padding: 2rem 0 1.5rem;
+  }                                                                                                                                                                                                                                                                            
+   
+  .header h1 {                                                                                                                                                                                                                                                                 
+    font-size: 2rem;                                        
+    font-weight: 900;
+    letter-spacing: 3px;
+    text-transform: uppercase;                                                                                                                                                                                                                                                 
+    background: linear-gradient(135deg, var(--gold) 0%, #f0d78c 50%, var(--gold) 100%);
+    -webkit-background-clip: text;                                                                                                                                                                                                                                             
+    -webkit-text-fill-color: transparent;                   
+    background-clip: text;                                                                                                                                                                                                                                                     
+  }                                                                                                                                                                                                                                                                            
+   
+  .header .subtitle {                                                                                                                                                                                                                                                          
+    font-size: 0.75rem;                                     
+    color: var(--text3);
+    letter-spacing: 4px;                                                                                                                                                                                                                                                       
+    text-transform: uppercase;
+    margin-top: 6px;                                                                                                                                                                                                                                                           
+  }                                                         
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
+  .live-dot {                                                                                                                                                                                                                                                                  
+    display: inline-block;
+    width: 6px;                                                                                                                                                                                                                                                                
+    height: 6px;                                            
+    background: var(--green);
+    border-radius: 50%;
+    margin-right: 6px;
+    animation: pulse 2s ease-in-out infinite;                                                                                                                                                                                                                                  
+  }
+                                                                                                                                                                                                                                                                               
+  @keyframes pulse {                                        
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }                                                                                                                                                                                                                                                                            
+   
+  .live-text {                                                                                                                                                                                                                                                                 
+    font-size: 0.65rem;                                     
+    color: var(--text3);
+    letter-spacing: 2px;
+    text-transform: uppercase;                                                                                                                                                                                                                                                 
+    margin-top: 12px;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  .tabs {
+    display: flex;
+    gap: 0;
+    margin: 1.5rem 0;
+    background: var(--bg2);                                                                                                                                                                                                                                                    
+    border-radius: 12px;
+    padding: 4px;                                                                                                                                                                                                                                                              
+    border: 1px solid var(--border);                                                                                                                                                                                                                                           
+  }
+                                                                                                                                                                                                                                                                               
+  .tab {                                                    
+    flex: 1;
+    text-align: center;
+    padding: 10px 0;
+    font-size: 0.8rem;                                                                                                                                                                                                                                                         
+    font-weight: 500;
+    color: var(--text3);                                                                                                                                                                                                                                                       
+    cursor: pointer;                                                                                                                                                                                                                                                           
+    border-radius: 9px;
+    transition: all 0.3s ease;                                                                                                                                                                                                                                                 
+    letter-spacing: 0.5px;                                  
+  }                                                                                                                                                                                                                                                                            
+   
+  .tab.active {                                                                                                                                                                                                                                                                
+    background: var(--bg3);                                 
+    color: var(--gold);
+    font-weight: 600;
+  }                                                                                                                                                                                                                                                                            
+   
+  .tab:hover:not(.active) { color: var(--text2); }                                                                                                                                                                                                                             
+                                                            
+  .section-label {                                                                                                                                                                                                                                                             
+    font-size: 0.65rem;
+    font-weight: 600;                                                                                                                                                                                                                                                          
+    color: var(--text3);                                    
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    margin-bottom: 16px;                                                                                                                                                                                                                                                       
+    padding-left: 4px;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  .player-row {                                                                                                                                                                                                                                                                
+    display: flex;
+    align-items: center;                                                                                                                                                                                                                                                       
+    padding: 14px 16px;                                     
+    margin-bottom: 4px;
+    border-radius: 10px;                                                                                                                                                                                                                                                       
+    background: var(--bg2);
+    border: 1px solid var(--border);                                                                                                                                                                                                                                           
+    transition: all 0.2s ease;                              
+    animation: fadeIn 0.4s ease forwards;                                                                                                                                                                                                                                      
+    opacity: 0;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  .player-row:hover {                                                                                                                                                                                                                                                          
+    background: var(--bg3);
+    transform: translateX(4px);                                                                                                                                                                                                                                                
+    border-color: rgba(255,255,255,0.1);                    
+  }                                                                                                                                                                                                                                                                            
+   
+  .player-row.top1 { border-left: 3px solid var(--gold); }                                                                                                                                                                                                                     
+  .player-row.top2 { border-left: 3px solid var(--silver); }
+  .player-row.top3 { border-left: 3px solid var(--bronze); }                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                                                               
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }                                                                                                                                                                                                                           
+    to { opacity: 1; transform: translateY(0); }            
+  }
 
-body {
-  font-family: 'Outfit', sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-  overflow-x: hidden;
-}
+  .rank-num {                                                                                                                                                                                                                                                                  
+    font-size: 1.1rem;
+    font-weight: 700;                                                                                                                                                                                                                                                          
+    width: 32px;                                            
+    text-align: center;
+    color: var(--text3);                                                                                                                                                                                                                                                       
+    font-variant-numeric: tabular-nums;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  .rank-num.r1 { color: var(--gold); }                                                                                                                                                                                                                                         
+  .rank-num.r2 { color: var(--silver); }
+  .rank-num.r3 { color: var(--bronze); }                                                                                                                                                                                                                                       
+                                                            
+  .player-info {
+    flex: 1;
+    margin-left: 14px;                                                                                                                                                                                                                                                         
+    min-width: 0;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  .player-name {
+    font-size: 0.95rem;
+    font-weight: 600;                                                                                                                                                                                                                                                          
+    color: var(--text);
+    white-space: nowrap;                                                                                                                                                                                                                                                       
+    overflow: hidden;                                       
+    text-overflow: ellipsis;
+  }
+                                                                                                                                                                                                                                                                               
+  .player-record {
+    font-size: 0.7rem;                                                                                                                                                                                                                                                         
+    color: var(--text2);                                    
+    margin-top: 2px;
+  }
 
-.bg-glow {
-  position: fixed;
-  top: -200px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 600px;
-  height: 600px;
-  background: radial-gradient(circle, rgba(212,168,67,0.08) 0%, transparent 70%);
-  pointer-events: none;
-  z-index: 0;
-}
+  .player-stats {                                                                                                                                                                                                                                                              
+    text-align: right;
+    flex-shrink: 0;                                                                                                                                                                                                                                                            
+  }                                                         
 
-.container {
-  max-width: 680px;
-  margin: 0 auto;
-  padding: 2rem 1.25rem;
-  position: relative;
-  z-index: 1;
-}
+  .elo-num {
+    font-size: 1.15rem;
+    font-weight: 700;                                                                                                                                                                                                                                                          
+    color: var(--text);
+    font-variant-numeric: tabular-nums;                                                                                                                                                                                                                                        
+  }                                                         
 
-.header {
-  text-align: center;
-  padding: 2rem 0 1.5rem;
-}
+  .elo-rank {                                                                                                                                                                                                                                                                  
+    font-size: 0.65rem;
+    color: var(--gold-dim);                                                                                                                                                                                                                                                    
+    font-weight: 500;                                       
+    margin-top: 2px;                                                                                                                                                                                                                                                           
+  }
+                                                                                                                                                                                                                                                                               
+  .winrate {                                                
+    font-size: 1rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }                                                                                                                                                                                                                                                                            
+   
+  .winrate.good { color: var(--green); }                                                                                                                                                                                                                                       
+  .winrate.mid { color: var(--gold); }                      
+  .winrate.bad { color: var(--red); }
+                                                                                                                                                                                                                                                                               
+  .h2h-card {
+    background: var(--bg2);                                                                                                                                                                                                                                                    
+    border: 1px solid var(--border);                        
+    border-radius: 14px;                                                                                                                                                                                                                                                       
+    padding: 24px;
+    margin-top: 8px;                                                                                                                                                                                                                                                           
+  }                                                         
 
-.header h1 {
-  font-size: 2rem;
-  font-weight: 900;
-  letter-spacing: 3px;
-  text-transform: uppercase;
-  background: linear-gradient(135deg, var(--gold) 0%, #f0d78c 50%, var(--gold) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
+  .h2h-mode-toggle {                                                                                                                                                                                                                                                           
+    display: flex;
+    gap: 0;                                                                                                                                                                                                                                                                    
+    margin-bottom: 20px;                                    
+    background: var(--bg);                                                                                                                                                                                                                                                     
+    border-radius: 8px;
+    padding: 3px;                                                                                                                                                                                                                                                              
+    border: 1px solid var(--border);                        
+  }                                                                                                                                                                                                                                                                            
+   
+  .h2h-mode {                                                                                                                                                                                                                                                                  
+    flex: 1;                                                
+    text-align: center;
+    padding: 8px 0;
+    font-size: 0.72rem;
+    font-weight: 500;                                                                                                                                                                                                                                                          
+    color: var(--text3);
+    cursor: pointer;                                                                                                                                                                                                                                                           
+    border-radius: 6px;                                     
+    transition: all 0.3s ease;
+    letter-spacing: 0.5px;                                                                                                                                                                                                                                                     
+  }
+                                                                                                                                                                                                                                                                               
+  .h2h-mode.active {                                        
+    background: var(--bg3);
+    color: var(--gold);
+    font-weight: 600;
+  }                                                                                                                                                                                                                                                                            
+   
+  .h2h-mode:hover:not(.active) { color: var(--text2); }                                                                                                                                                                                                                        
+                                                            
+  .h2h-inputs {
+    display: flex;
+    gap: 10px;                                                                                                                                                                                                                                                                 
+    align-items: center;
+    margin-bottom: 20px;                                                                                                                                                                                                                                                       
+  }                                                         
 
-.header .subtitle {
-  font-size: 0.75rem;
-  color: var(--text3);
-  letter-spacing: 4px;
-  text-transform: uppercase;
-  margin-top: 6px;
-}
+  .h2h-inputs input {
+    flex: 1;
+    padding: 10px 14px;
+    border-radius: 8px;                                                                                                                                                                                                                                                        
+    border: 1px solid var(--border);
+    background: var(--bg3);                                                                                                                                                                                                                                                    
+    color: var(--text);                                     
+    font-family: 'Outfit', sans-serif;
+    font-size: 0.85rem;                                                                                                                                                                                                                                                        
+    outline: none;
+    transition: border-color 0.2s;                                                                                                                                                                                                                                             
+  }                                                         
 
-.live-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  background: var(--green);
-  border-radius: 50%;
-  margin-right: 6px;
-  animation: pulse 2s ease-in-out infinite;
-}
+  .h2h-inputs input:focus { border-color: var(--gold-dim); }                                                                                                                                                                                                                   
+  .h2h-inputs input::placeholder { color: var(--text3); }
+                                                                                                                                                                                                                                                                               
+  .vs-badge {                                               
+    font-size: 0.75rem;
+    font-weight: 700;                                                                                                                                                                                                                                                          
+    color: var(--text3);
+    letter-spacing: 2px;                                                                                                                                                                                                                                                       
+  }                                                                                                                                                                                                                                                                            
+   
+  .h2h-btn {                                                                                                                                                                                                                                                                   
+    width: 100%;                                            
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--gold-dim);
+    background: transparent;                                                                                                                                                                                                                                                   
+    color: var(--gold);
+    font-family: 'Outfit', sans-serif;                                                                                                                                                                                                                                         
+    font-size: 0.8rem;                                      
+    font-weight: 600;                                                                                                                                                                                                                                                          
+    letter-spacing: 1px;
+    cursor: pointer;                                                                                                                                                                                                                                                           
+    transition: all 0.2s;                                   
+    margin-bottom: 20px;
+  }                                                                                                                                                                                                                                                                            
+   
+  .h2h-btn:hover { background: rgba(212,168,67,0.1); }                                                                                                                                                                                                                         
+                                                            
+  .h2h-result { display: none; text-align: center; }                                                                                                                                                                                                                           
+  .h2h-result.visible { display: block; }
+                                                                                                                                                                                                                                                                               
+  .h2h-matchup {                                            
+    display: flex;
+    justify-content: center;                                                                                                                                                                                                                                                   
+    align-items: center;
+    gap: 32px;                                                                                                                                                                                                                                                                 
+    padding: 20px;                                          
+    background: var(--bg3);
+    border-radius: 10px;                                                                                                                                                                                                                                                       
+  }
+                                                                                                                                                                                                                                                                               
+  .h2h-player { text-align: center; }                                                                                                                                                                                                                                          
+   
+  .h2h-player-name {                                                                                                                                                                                                                                                           
+    font-size: 0.75rem;                                     
+    color: var(--text2);
+    margin-bottom: 4px;
+    text-transform: uppercase;                                                                                                                                                                                                                                                 
+    letter-spacing: 1px;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  .h2h-wins {
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--text);                                                                                                                                                                                                                                                        
+  }
+                                                                                                                                                                                                                                                                               
+  .h2h-vs {                                                 
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text3);                                                                                                                                                                                                                                                       
+    letter-spacing: 2px;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  .h2h-vs-total {
+    font-size: 0.65rem;
+    color: var(--text3);                                                                                                                                                                                                                                                       
+    margin-top: 4px;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  .h2h-no-data {
+    font-size: 0.8rem;
+    color: var(--text3);                                                                                                                                                                                                                                                       
+    padding: 16px;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  .player-extra {
+    font-size: 0.65rem;
+    color: var(--text3);                                                                                                                                                                                                                                                       
+    margin-top: 3px;
+    white-space: nowrap;                                                                                                                                                                                                                                                       
+    overflow: hidden;                                       
+    text-overflow: ellipsis;
+  }
+                                                                                                                                                                                                                                                                               
+  .autocomplete-wrap {
+    position: relative;                                                                                                                                                                                                                                                        
+    flex: 1;                                                
+  }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
+  .autocomplete-wrap input {
+    width: 100%;
+  }
+                                                                                                                                                                                                                                                                               
+  .autocomplete-list {
+    position: absolute;                                                                                                                                                                                                                                                        
+    top: 100%;                                              
+    left: 0;
+    right: 0;
+    background: var(--bg3);
+    border: 1px solid var(--gold-dim);
+    border-radius: 8px;                                                                                                                                                                                                                                                        
+    max-height: 180px;
+    overflow-y: auto;                                                                                                                                                                                                                                                          
+    z-index: 100;                                           
+    display: none;
+  }                                                                                                                                                                                                                                                                            
+   
+  .autocomplete-list.open { display: block; }                                                                                                                                                                                                                                  
+                                                            
+  .autocomplete-item {
+    padding: 8px 14px;
+    font-size: 0.85rem;
+    color: var(--text);                                                                                                                                                                                                                                                        
+    cursor: pointer;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  .autocomplete-item:hover, .autocomplete-item.selected {
+    background: rgba(212,168,67,0.15);
+    color: var(--gold);                                                                                                                                                                                                                                                        
+  }
+                                                                                                                                                                                                                                                                               
+  .loading {                                                
+    text-align: center;
+    padding: 40px;
+    color: var(--text3);
+    font-size: 0.8rem;                                                                                                                                                                                                                                                         
+    letter-spacing: 2px;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  .spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--border);
+    border-top-color: var(--gold);                                                                                                                                                                                                                                             
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;                                                                                                                                                                                                                                      
+    margin: 0 auto 12px;                                    
+  }                                                                                                                                                                                                                                                                            
+   
+  @keyframes spin { to { transform: rotate(360deg); } }                                                                                                                                                                                                                        
+                                                            
+  .footer {
+    text-align: center;
+    margin-top: 3rem;
+    padding-top: 1.5rem;                                                                                                                                                                                                                                                       
+    border-top: 1px solid var(--border);
+    font-size: 0.6rem;                                                                                                                                                                                                                                                         
+    color: var(--text3);                                                                                                                                                                                                                                                       
+    letter-spacing: 2px;
+    text-transform: uppercase;                                                                                                                                                                                                                                                 
+  }                                                         
 
-.live-text {
-  font-size: 0.65rem;
-  color: var(--text3);
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  margin-top: 12px;
-}
+  .tab-content { display: none; }                                                                                                                                                                                                                                              
+  .tab-content.active { display: block; }
+                                                                                                                                                                                                                                                                               
+  @media (max-width: 480px) {                               
+    .header h1 { font-size: 1.5rem; }
+    .player-row { padding: 12px; }
+    .player-name { font-size: 0.85rem; }                                                                                                                                                                                                                                       
+    .elo-num { font-size: 1rem; }
+    .h2h-matchup { gap: 20px; padding: 16px; }                                                                                                                                                                                                                                 
+    .h2h-wins { font-size: 1.5rem; }                        
+  }                                                                                                                                                                                                                                                                            
+  </style>                                                  
+  </head>                                                                                                                                                                                                                                                                      
+  <body>                                                    
 
-.tabs {
-  display: flex;
-  gap: 0;
-  margin: 1.5rem 0;
-  background: var(--bg2);
-  border-radius: 12px;
-  padding: 4px;
-  border: 1px solid var(--border);
-}
-
-.tab {
-  flex: 1;
-  text-align: center;
-  padding: 10px 0;
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--text3);
-  cursor: pointer;
-  border-radius: 9px;
-  transition: all 0.3s ease;
-  letter-spacing: 0.5px;
-}
-
-.tab.active {
-  background: var(--bg3);
-  color: var(--gold);
-  font-weight: 600;
-}
-
-.tab:hover:not(.active) { color: var(--text2); }
-
-.section-label {
-  font-size: 0.65rem;
-  font-weight: 600;
-  color: var(--text3);
-  text-transform: uppercase;
-  letter-spacing: 3px;
-  margin-bottom: 16px;
-  padding-left: 4px;
-}
-
-.player-row {
-  display: flex;
-  align-items: center;
-  padding: 14px 16px;
-  margin-bottom: 4px;
-  border-radius: 10px;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  transition: all 0.2s ease;
-  animation: fadeIn 0.4s ease forwards;
-  opacity: 0;
-}
-
-.player-row:hover {
-  background: var(--bg3);
-  transform: translateX(4px);
-  border-color: rgba(255,255,255,0.1);
-}
-
-.player-row.top1 { border-left: 3px solid var(--gold); }
-.player-row.top2 { border-left: 3px solid var(--silver); }
-.player-row.top3 { border-left: 3px solid var(--bronze); }
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.rank-num {
-  font-size: 1.1rem;
-  font-weight: 700;
-  width: 32px;
-  text-align: center;
-  color: var(--text3);
-  font-variant-numeric: tabular-nums;
-}
-
-.rank-num.r1 { color: var(--gold); }
-.rank-num.r2 { color: var(--silver); }
-.rank-num.r3 { color: var(--bronze); }
-
-.player-info {
-  flex: 1;
-  margin-left: 14px;
-  min-width: 0;
-}
-
-.player-name {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.player-record {
-  font-size: 0.7rem;
-  color: var(--text2);
-  margin-top: 2px;
-}
-
-.player-stats {
-  text-align: right;
-  flex-shrink: 0;
-}
-
-.elo-num {
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-
-.elo-rank {
-  font-size: 0.65rem;
-  color: var(--gold-dim);
-  font-weight: 500;
-  margin-top: 2px;
-}
-
-.winrate {
-  font-size: 1rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.winrate.good { color: var(--green); }
-.winrate.mid { color: var(--gold); }
-.winrate.bad { color: var(--red); }
-
-.h2h-card {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 24px;
-  margin-top: 8px;
-}
-
-.h2h-mode-toggle {
-  display: flex;
-  gap: 0;
-  margin-bottom: 20px;
-  background: var(--bg);
-  border-radius: 8px;
-  padding: 3px;
-  border: 1px solid var(--border);
-}
-
-.h2h-mode {
-  flex: 1;
-  text-align: center;
-  padding: 8px 0;
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--text3);
-  cursor: pointer;
-  border-radius: 6px;
-  transition: all 0.3s ease;
-  letter-spacing: 0.5px;
-}
-
-.h2h-mode.active {
-  background: var(--bg3);
-  color: var(--gold);
-  font-weight: 600;
-}
-
-.h2h-mode:hover:not(.active) { color: var(--text2); }
-
-.h2h-inputs {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.h2h-inputs input {
-  flex: 1;
-  padding: 10px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg3);
-  color: var(--text);
-  font-family: 'Outfit', sans-serif;
-  font-size: 0.85rem;
-  outline: none;
-  transition: border-color 0.2s;
-}
-
-.h2h-inputs input:focus { border-color: var(--gold-dim); }
-.h2h-inputs input::placeholder { color: var(--text3); }
-
-.vs-badge {
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: var(--text3);
-  letter-spacing: 2px;
-}
-
-.h2h-btn {
-  width: 100%;
-  padding: 10px;
-  border-radius: 8px;
-  border: 1px solid var(--gold-dim);
-  background: transparent;
-  color: var(--gold);
-  font-family: 'Outfit', sans-serif;
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 1px;
-  cursor: pointer;
-  transition: all 0.2s;
-  margin-bottom: 20px;
-}
-
-.h2h-btn:hover { background: rgba(212,168,67,0.1); }
-
-.h2h-result { display: none; text-align: center; }
-.h2h-result.visible { display: block; }
-
-.h2h-matchup {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 32px;
-  padding: 20px;
-  background: var(--bg3);
-  border-radius: 10px;
-}
-
-.h2h-player { text-align: center; }
-
-.h2h-player-name {
-  font-size: 0.75rem;
-  color: var(--text2);
-  margin-bottom: 4px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-.h2h-wins {
-  font-size: 2rem;
-  font-weight: 800;
-  color: var(--text);
-}
-
-.h2h-vs {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--text3);
-  letter-spacing: 2px;
-}
-
-.h2h-vs-total {
-  font-size: 0.65rem;
-  color: var(--text3);
-  margin-top: 4px;
-}
-
-.h2h-no-data {
-  font-size: 0.8rem;
-  color: var(--text3);
-  padding: 16px;
-}
-
-.loading {
-  text-align: center;
-  padding: 40px;
-  color: var(--text3);
-  font-size: 0.8rem;
-  letter-spacing: 2px;
-}
-
-.spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid var(--border);
-  border-top-color: var(--gold);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  margin: 0 auto 12px;
-}
-
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.footer {
-  text-align: center;
-  margin-top: 3rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--border);
-  font-size: 0.6rem;
-  color: var(--text3);
-  letter-spacing: 2px;
-  text-transform: uppercase;
-}
-
-.tab-content { display: none; }
-.tab-content.active { display: block; }
-
-@media (max-width: 480px) {
-  .header h1 { font-size: 1.5rem; }
-  .player-row { padding: 12px; }
-  .player-name { font-size: 0.85rem; }
-  .elo-num { font-size: 1rem; }
-  .h2h-matchup { gap: 20px; padding: 16px; }
-  .h2h-wins { font-size: 1.5rem; }
-}
-</style>
-</head>
-<body>
-
-<div class="bg-glow"></div>
-
-<div class="container">
-  <div class="header">
-    <h1>Vainglory League</h1>
-    <div class="subtitle">3v3 competitive rankings</div>
-    <div class="live-text"><span class="live-dot"></span>Live — auto-updates every 60s</div>
-  </div>
-
-  <div class="tabs">
-    <div class="tab active" onclick="showTab('ranked')">Ranked</div>
-    <div class="tab" onclick="showTab('scrims')">Scrims</div>
-    <div class="tab" onclick="showTab('h2h')">Head to head</div>
-  </div>
-
-  <div id="tab-ranked" class="tab-content active">
-    <div class="section-label">ELO ranking</div>
-    <div id="ranked-list"><div class="loading"><div class="spinner"></div>Loading...</div></div>
-  </div>
-
-  <div id="tab-scrims" class="tab-content">
-    <div class="section-label">Scrims — by wins</div>
-    <div id="scrims-list"><div class="loading"><div class="spinner"></div>Loading...</div></div>
-  </div>
-
-  <div id="tab-h2h" class="tab-content">
-    <div class="section-label">Head-to-head search</div>
-    <div class="h2h-card">
-      <div class="h2h-mode-toggle">
-        <div class="h2h-mode active" onclick="setH2HMode('ranked')">Ranked</div>
-        <div class="h2h-mode" onclick="setH2HMode('scrims')">Scrims</div>
-        <div class="h2h-mode" onclick="setH2HMode('both')">Both</div>
-      </div>
-      <div class="h2h-inputs">
-        <input type="text" id="h2h-p1" placeholder="Player 1">
-        <div class="vs-badge">VS</div>
-        <input type="text" id="h2h-p2" placeholder="Player 2">
-      </div>
-      <button class="h2h-btn" onclick="searchH2H()">SEARCH</button>
-      <div id="h2h-result" class="h2h-result"></div>
+  <div class="bg-glow"></div>                                                                                                                                                                                                                                                  
+   
+  <div class="container">                                                                                                                                                                                                                                                      
+    <div class="header">                                    
+      <h1>Vainglory League</h1>
+      <div class="subtitle">3v3 competitive rankings</div>
+      <div class="live-text"><span class="live-dot"></span>Live — auto-updates every 60s</div>                                                                                                                                                                                 
+    </div>                                                                                                                                                                                                                                                                     
+                                                                                                                                                                                                                                                                               
+    <div class="tabs">                                                                                                                                                                                                                                                         
+      <div class="tab active" onclick="showTab('ranked')">Ranked</div>
+      <div class="tab" onclick="showTab('scrims')">Scrims</div>                                                                                                                                                                                                                
+      <div class="tab" onclick="showTab('h2h')">Head to head</div>
+    </div>                                                                                                                                                                                                                                                                     
+                                                            
+    <div id="tab-ranked" class="tab-content active">                                                                                                                                                                                                                           
+      <div class="section-label">ELO ranking</div>          
+      <div id="ranked-list"><div class="loading"><div class="spinner"></div>Loading...</div></div>                                                                                                                                                                             
+    </div>                                                                                                                                                                                                                                                                     
+                                                                                                                                                                                                                                                                               
+    <div id="tab-scrims" class="tab-content">                                                                                                                                                                                                                                  
+      <div class="section-label">Scrims — by wins</div>     
+      <div id="scrims-list"><div class="loading"><div class="spinner"></div>Loading...</div></div>                                                                                                                                                                             
     </div>
+                                                                                                                                                                                                                                                                               
+    <div id="tab-h2h" class="tab-content">                                                                                                                                                                                                                                     
+      <div class="section-label">Head-to-head search</div>
+      <div class="h2h-card">                                                                                                                                                                                                                                                   
+        <div class="h2h-mode-toggle">                       
+          <div class="h2h-mode active" onclick="setH2HMode('ranked')">Ranked</div>
+          <div class="h2h-mode" onclick="setH2HMode('scrims')">Scrims</div>                                                                                                                                                                                                    
+          <div class="h2h-mode" onclick="setH2HMode('both')">Both</div>                                                                                                                                                                                                        
+        </div>                                                                                                                                                                                                                                                                 
+        <div class="h2h-inputs">                                                                                                                                                                                                                                               
+          <div class="autocomplete-wrap">                                                                                                                                                                                                                                      
+            <input type="text" id="h2h-p1" placeholder="Player 1" autocomplete="off">
+            <div class="autocomplete-list" id="ac-list-1"></div>                                                                                                                                                                                                               
+          </div>                                            
+          <div class="vs-badge">VS</div>                                                                                                                                                                                                                                       
+          <div class="autocomplete-wrap">                                                                                                                                                                                                                                      
+            <input type="text" id="h2h-p2" placeholder="Player 2" autocomplete="off">
+            <div class="autocomplete-list" id="ac-list-2"></div>                                                                                                                                                                                                               
+          </div>                                                                                                                                                                                                                                                               
+        </div>
+        <button class="h2h-btn" onclick="searchH2H()">SEARCH</button>                                                                                                                                                                                                          
+        <div id="h2h-result" class="h2h-result"></div>      
+      </div>                                                                                                                                                                                                                                                                   
+    </div>
+                                                                                                                                                                                                                                                                               
+    <div class="footer">Powered by ivan</div>                                                                                                                                                                                                                                  
   </div>
+                                                                                                                                                                                                                                                                               
+  <script>                                                  
+  const SHEET_ID = '1xAeP5YFnkME0G5jCZPBy0H3QpgJZBEaCYJyuNDn3Fdw';
+  let h2hMode = 'ranked';                                                                                                                                                                                                                                                      
+  let allPlayerNames = [];
+                                                                                                                                                                                                                                                                               
+  function sheetURL(tab) {                                                                                                                                                                                                                                                     
+    return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(tab)}`;
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  function parseSheet(text) {                                                                                                                                                                                                                                                  
+    const json = JSON.parse(text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);/)[1]);
+    const cols = json.table.cols.map(c => c.label);                                                                                                                                                                                                                            
+    return json.table.rows.map(r => {                                                                                                                                                                                                                                          
+      const obj = {};                                                                                                                                                                                                                                                          
+      r.c.forEach((cell, i) => { obj[cols[i]] = cell ? (cell.v !== null ? cell.v : '') : ''; });                                                                                                                                                                               
+      return obj;                                                                                                                                                                                                                                                              
+    });
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  async function fetchSheet(tab) {                                                                                                                                                                                                                                             
+    try {
+      const res = await fetch(sheetURL(tab));                                                                                                                                                                                                                                  
+      return parseSheet(await res.text());                  
+    } catch (e) { return []; }                                                                                                                                                                                                                                                 
+  }
+                                                                                                                                                                                                                                                                               
+  function getWRClass(wr) {                                 
+    const n = parseFloat(wr);
+    if (n >= 60) return 'good';                                                                                                                                                                                                                                                
+    if (n >= 45) return 'mid';
+    return 'bad';                                                                                                                                                                                                                                                              
+  }                                                         
+                                                                                                                                                                                                                                                                               
+  async function loadRanked() {                             
+    const rows = await fetchSheet('Players');
+    const el = document.getElementById('ranked-list');
+    if (!rows.length) { el.innerHTML = '<div class="loading">No players yet</div>'; return; }                                                                                                                                                                                  
+    const sorted = rows.filter(r => r.Player && r.ELO).sort((a, b) => Number(b.ELO) - Number(a.ELO));                                                                                                                                                                          
+    el.innerHTML = sorted.map((p, i) => {                                                                                                                                                                                                                                      
+      const w = Number(p.Wins || 0), l = Number(p.Losses || 0), t = w + l;                                                                                                                                                                                                     
+      const wr = t > 0 ? ((w / t) * 100).toFixed(1) : '0.0';                                                                                                                                                                                                                   
+      const streak = Number(p.Streak || 0);                                                                                                                                                                                                                                    
+      const streakStr = streak > 0 ? `🔥${streak}W` : streak < 0 ? `❄️ ${Math.abs(streak)}L` : '—';                                                                                                                                                                             
+      const lastRival = p.LastRival || p['Last Rival'] || '';                                                                                                                                                                                                                  
+      const lastMatch = p.LastMatch || p['Last Match'] || '';
+      const extra = [streakStr, lastRival ? `vs ${lastRival}` : '', lastMatch].filter(Boolean).join(' · ');                                                                                                                                                                    
+      const tc = i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : '';                                                                                                                                                                                                  
+      const rc = i === 0 ? 'r1' : i === 1 ? 'r2' : i === 2 ? 'r3' : '';                                                                                                                                                                                                        
+      return `<div class="player-row ${tc}" style="animation-delay:${i*0.05}s">                                                                                                                                                                                                
+        <div class="rank-num ${rc}">${i+1}</div>                                                                                                                                                                                                                               
+        <div class="player-info">                                                                                                                                                                                                                                              
+          <div class="player-name">${p.Player}</div>                                                                                                                                                                                                                           
+          <div class="player-record">${w}W - ${l}L · ${wr}%</div>                                                                                                                                                                                                              
+          ${extra ? `<div class="player-extra">${extra}</div>` : ''}
+        </div>                                                                                                                                                                                                                                                                 
+        <div class="player-stats">                          
+          <div class="elo-num">${Number(p.ELO).toLocaleString()}</div>                                                                                                                                                                                                         
+          <div class="elo-rank">${p.Rank||''}</div>                                                                                                                                                                                                                            
+        </div></div>`;
+    }).join('');                                                                                                                                                                                                                                                               
+  }                                                         
+                                                                                                                                                                                                                                                                               
+  async function loadScrims() {                             
+    const rows = await fetchSheet('ScrimPlayers');
+    const el = document.getElementById('scrims-list');
+    if (!rows.length) { el.innerHTML = '<div class="loading">No scrim players yet</div>'; return; }                                                                                                                                                                            
+    const sorted = rows.filter(r => r.Player).sort((a, b) => Number(b.Wins||0) - Number(a.Wins||0));
+    el.innerHTML = sorted.map((p, i) => {                                                                                                                                                                                                                                      
+      const w = Number(p.Wins||0), l = Number(p.Losses||0), t = w + l;
+      const wr = t > 0 ? ((w/t)*100).toFixed(0) : '0';                                                                                                                                                                                                                         
+      const streak = Number(p.Streak || 0);                 
+      const streakStr = streak > 0 ? `🔥${streak}W` : streak < 0 ? `❄️ ${Math.abs(streak)}L` : '—';                                                                                                                                                                             
+      const lastMatch = p.LastMatch || p['Last Match'] || '';                                                                                                                                                                                                                  
+      const extra = [streakStr, lastMatch].filter(Boolean).join(' · ');
+      const tc = i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : '';                                                                                                                                                                                                  
+      const rc = i === 0 ? 'r1' : i === 1 ? 'r2' : i === 2 ? 'r3' : '';
+      return `<div class="player-row ${tc}" style="animation-delay:${i*0.05}s">                                                                                                                                                                                                
+        <div class="rank-num ${rc}">${i+1}</div>                                                                                                                                                                                                                               
+        <div class="player-info">                                                                                                                                                                                                                                              
+          <div class="player-name">${p.Player}</div>                                                                                                                                                                                                                           
+          <div class="player-record">${w}W - ${l}L</div>    
+          ${extra ? `<div class="player-extra">${extra}</div>` : ''}                                                                                                                                                                                                           
+        </div>
+        <div class="player-stats"><div class="winrate ${getWRClass(wr)}">${wr}%</div></div></div>`;                                                                                                                                                                            
+    }).join('');                                                                                                                                                                                                                                                               
+  }
+                                                                                                                                                                                                                                                                               
+  async function loadAllPlayerNames() {                     
+    const [ranked, scrims] = await Promise.all([fetchSheet('Players'), fetchSheet('ScrimPlayers')]);
+    const names = new Set();                                                                                                                                                                                                                                                   
+    ranked.forEach(r => r.Player && names.add(r.Player));
+    scrims.forEach(r => r.Player && names.add(r.Player));                                                                                                                                                                                                                      
+    allPlayerNames = [...names].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  function setupAutocomplete(inputId, listId) {                                                                                                                                                                                                                                
+    const input = document.getElementById(inputId);         
+    const list = document.getElementById(listId);                                                                                                                                                                                                                              
+    let activeIdx = -1;                                     
+                                                                                                                                                                                                                                                                               
+    function showSuggestions(val) {
+      const q = val.toLowerCase();                                                                                                                                                                                                                                             
+      const matches = q ? allPlayerNames.filter(n => n.toLowerCase().includes(q)) : [];                                                                                                                                                                                        
+      if (!matches.length) { list.classList.remove('open'); return; }
+      activeIdx = -1;                                                                                                                                                                                                                                                          
+      list.innerHTML = matches.map((n, i) => `<div class="autocomplete-item" data-val="${n}">${n}</div>`).join('');
+      list.classList.add('open');                                                                                                                                                                                                                                              
+      list.querySelectorAll('.autocomplete-item').forEach(item => {
+        item.addEventListener('mousedown', e => {                                                                                                                                                                                                                              
+          input.value = e.currentTarget.dataset.val;        
+          list.classList.remove('open');                                                                                                                                                                                                                                       
+        });                                                 
+      });                                                                                                                                                                                                                                                                      
+    }                                                       
 
-  <div class="footer">Powered by ivan</div>
-</div>
-
-<script>
-const SHEET_ID = '1xAeP5YFnkME0G5jCZPBy0H3QpgJZBEaCYJyuNDn3Fdw';
-let h2hMode = 'ranked';
-
-function sheetURL(tab) {
-  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(tab)}`;
-}
-
-function parseSheet(text) {
-  const json = JSON.parse(text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);/)[1]);
-  const cols = json.table.cols.map(c => c.label);
-  return json.table.rows.map(r => {
-    const obj = {};
-    r.c.forEach((cell, i) => { obj[cols[i]] = cell ? (cell.v !== null ? cell.v : '') : ''; });
-    return obj;
-  });
-}
-
-async function fetchSheet(tab) {
-  try {
-    const res = await fetch(sheetURL(tab));
-    return parseSheet(await res.text());
-  } catch (e) { return []; }
-}
-
-function getWRClass(wr) {
-  const n = parseFloat(wr);
-  if (n >= 60) return 'good';
-  if (n >= 45) return 'mid';
-  return 'bad';
-}
-
-async function loadRanked() {
-  const rows = await fetchSheet('Players');
-  const el = document.getElementById('ranked-list');
-  if (!rows.length) { el.innerHTML = '<div class="loading">No players yet</div>'; return; }
-  const sorted = rows.filter(r => r.Player && r.ELO).sort((a, b) => Number(b.ELO) - Number(a.ELO));
-  el.innerHTML = sorted.map((p, i) => {
-    const w = Number(p.Wins || 0), l = Number(p.Losses || 0), t = w + l;
-    const wr = t > 0 ? ((w / t) * 100).toFixed(1) : '0.0';
-    const tc = i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : '';
-    const rc = i === 0 ? 'r1' : i === 1 ? 'r2' : i === 2 ? 'r3' : '';
-    return `<div class="player-row ${tc}" style="animation-delay:${i*0.05}s">
-      <div class="rank-num ${rc}">${i+1}</div>
-      <div class="player-info"><div class="player-name">${p.Player}</div>
-      <div class="player-record">${w}W - ${l}L (${wr}%)</div></div>
-      <div class="player-stats"><div class="elo-num">${Number(p.ELO).toLocaleString()}</div>
-      <div class="elo-rank">${p.Rank||''}</div></div></div>`;
-  }).join('');
-}
-
-async function loadScrims() {
-  const rows = await fetchSheet('ScrimPlayers');
-  const el = document.getElementById('scrims-list');
-  if (!rows.length) { el.innerHTML = '<div class="loading">No scrim players yet</div>'; return; }
-  const sorted = rows.filter(r => r.Player).sort((a, b) => Number(b.Wins||0) - Number(a.Wins||0));
-  el.innerHTML = sorted.map((p, i) => {
-    const w = Number(p.Wins||0), l = Number(p.Losses||0), t = w + l;
-    const wr = t > 0 ? ((w/t)*100).toFixed(0) : '0';
-    const tc = i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : '';
-    const rc = i === 0 ? 'r1' : i === 1 ? 'r2' : i === 2 ? 'r3' : '';
-    return `<div class="player-row ${tc}" style="animation-delay:${i*0.05}s">
-      <div class="rank-num ${rc}">${i+1}</div>
-      <div class="player-info"><div class="player-name">${p.Player}</div>
-      <div class="player-record">${w}W - ${l}L</div></div>
-      <div class="player-stats"><div class="winrate ${getWRClass(wr)}">${wr}%</div></div></div>`;
-  }).join('');
-}
-
-function setH2HMode(mode) {
-  h2hMode = mode;
-  document.querySelectorAll('.h2h-mode').forEach(m => m.classList.remove('active'));
-  event.target.classList.add('active');
-  document.getElementById('h2h-result').classList.remove('visible');
-}
-
-async function searchH2H() {
-  const p1 = document.getElementById('h2h-p1').value.trim().toLowerCase();
-  const p2 = document.getElementById('h2h-p2').value.trim().toLowerCase();
-  const rd = document.getElementById('h2h-result');
-  if (!p1 || !p2) { rd.innerHTML = '<div class="h2h-no-data">Enter both player names</div>'; rd.classList.add('visible'); return; }
-  const [s1, s2] = [p1, p2].sort();
-  let rw1=0, rw2=0, sw1=0, sw2=0;
-
-  if (h2hMode === 'ranked' || h2hMode === 'both') {
-    const rows = await fetchSheet('H2H');
-    for (const row of rows) {
-      if (row.Player1 && row.Player2 && row.Player1.toLowerCase()===s1 && row.Player2.toLowerCase()===s2) {
-        rw1 = Number(row.Wins1||0); rw2 = Number(row.Wins2||0); break;
+    input.addEventListener('input', () => showSuggestions(input.value));                                                                                                                                                                                                       
+    input.addEventListener('focus', () => showSuggestions(input.value));
+    input.addEventListener('blur', () => setTimeout(() => list.classList.remove('open'), 150));                                                                                                                                                                                
+    input.addEventListener('keydown', e => {                                                                                                                                                                                                                                   
+      const items = list.querySelectorAll('.autocomplete-item');
+      if (e.key === 'ArrowDown') {                                                                                                                                                                                                                                             
+        activeIdx = Math.min(activeIdx + 1, items.length - 1);                                                                                                                                                                                                                 
+        items.forEach((el, i) => el.classList.toggle('selected', i === activeIdx));
+        e.preventDefault();                                                                                                                                                                                                                                                    
+      } else if (e.key === 'ArrowUp') {                     
+        activeIdx = Math.max(activeIdx - 1, 0);                                                                                                                                                                                                                                
+        items.forEach((el, i) => el.classList.toggle('selected', i === activeIdx));
+        e.preventDefault();                                                                                                                                                                                                                                                    
+      } else if (e.key === 'Enter') {                       
+        if (activeIdx >= 0 && items[activeIdx]) {                                                                                                                                                                                                                              
+          input.value = items[activeIdx].dataset.val;
+          list.classList.remove('open');                                                                                                                                                                                                                                       
+          e.preventDefault();                               
+        } else if (inputId === 'h2h-p1' || inputId === 'h2h-p2') {                                                                                                                                                                                                             
+          searchH2H();                                                                                                                                                                                                                                                         
+        }                                                                                                                                                                                                                                                                      
+      } else if (e.key === 'Escape') {                                                                                                                                                                                                                                         
+        list.classList.remove('open');                      
       }
-    }
+    });
+  }                                                                                                                                                                                                                                                                            
+  
+  function setH2HMode(mode) {                                                                                                                                                                                                                                                  
+    h2hMode = mode;                                         
+    document.querySelectorAll('.h2h-mode').forEach(m => m.classList.remove('active'));
+    event.target.classList.add('active');
+    document.getElementById('h2h-result').classList.remove('visible');                                                                                                                                                                                                         
   }
+                                                                                                                                                                                                                                                                               
+  async function searchH2H() {                                                                                                                                                                                                                                                 
+    const p1 = document.getElementById('h2h-p1').value.trim().toLowerCase();
+    const p2 = document.getElementById('h2h-p2').value.trim().toLowerCase();                                                                                                                                                                                                   
+    const rd = document.getElementById('h2h-result');                                                                                                                                                                                                                          
+    if (!p1 || !p2) { rd.innerHTML = '<div class="h2h-no-data">Enter both player names</div>'; rd.classList.add('visible'); return; }
+    const [s1, s2] = [p1, p2].sort();                                                                                                                                                                                                                                          
+    let rw1=0, rw2=0, sw1=0, sw2=0;                                                                                                                                                                                                                                            
+                                                                                                                                                                                                                                                                               
+    if (h2hMode === 'ranked' || h2hMode === 'both') {                                                                                                                                                                                                                          
+      const rows = await fetchSheet('H2H');                                                                                                                                                                                                                                    
+      for (const row of rows) {                                                                                                                                                                                                                                                
+        if (row.Player1 && row.Player2 && row.Player1.toLowerCase()===s1 && row.Player2.toLowerCase()===s2) {
+          rw1 = Number(row.Wins1||0); rw2 = Number(row.Wins2||0); break;                                                                                                                                                                                                       
+        }                                                                                                                                                                                                                                                                      
+      }                                                                                                                                                                                                                                                                        
+    }                                                                                                                                                                                                                                                                          
+                                                            
+    if (h2hMode === 'scrims' || h2hMode === 'both') {                                                                                                                                                                                                                          
+      const rows = await fetchSheet('ScrimH2H');
+      for (const row of rows) {                                                                                                                                                                                                                                                
+        if (row.Player1 && row.Player2 && row.Player1.toLowerCase()===s1 && row.Player2.toLowerCase()===s2) {
+          sw1 = Number(row.Wins1||0); sw2 = Number(row.Wins2||0); break;                                                                                                                                                                                                       
+        }
+      }                                                                                                                                                                                                                                                                        
+    }                                                       
 
-  if (h2hMode === 'scrims' || h2hMode === 'both') {
-    const rows = await fetchSheet('ScrimH2H');
-    for (const row of rows) {
-      if (row.Player1 && row.Player2 && row.Player1.toLowerCase()===s1 && row.Player2.toLowerCase()===s2) {
-        sw1 = Number(row.Wins1||0); sw2 = Number(row.Wins2||0); break;
-      }
-    }
-  }
-
-  let w1, w2, label;
-  if (h2hMode === 'ranked') { w1=rw1; w2=rw2; label='Ranked'; }
-  else if (h2hMode === 'scrims') { w1=sw1; w2=sw2; label='Scrims'; }
-  else { w1=rw1+sw1; w2=rw2+sw2; label='All modes'; }
-
-  const total = w1 + w2;
-  if (total === 0) { rd.innerHTML = '<div class="h2h-no-data">No matches found between these players</div>'; rd.classList.add('visible'); return; }
-
-  let breakdown = '';
-  if (h2hMode === 'both') {
-    const parts = [];
-    if (rw1+rw2 > 0) parts.push(`Ranked: ${rw1}-${rw2}`);
-    if (sw1+sw2 > 0) parts.push(`Scrims: ${sw1}-${sw2}`);
-    breakdown = `<div style="display:flex;justify-content:center;gap:24px;margin-top:12px;font-size:0.7rem;color:var(--text3)">${parts.map(p=>`<span>${p}</span>`).join('')}</div>`;
-  }
-
-  rd.innerHTML = `
-    <div style="font-size:0.65rem;color:var(--gold-dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:12px">${label}</div>
-    <div class="h2h-matchup">
-      <div class="h2h-player"><div class="h2h-player-name">${s1}</div><div class="h2h-wins">${w1}</div></div>
-      <div><div class="h2h-vs">VS</div><div class="h2h-vs-total">${total} matches</div></div>
-      <div class="h2h-player"><div class="h2h-player-name">${s2}</div><div class="h2h-wins">${w2}</div></div>
-    </div>${breakdown}`;
-  rd.classList.add('visible');
-}
-
-function showTab(tab) {
-  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));
-  document.getElementById(`tab-${tab}`).classList.add('active');
-  const tabs = document.querySelectorAll('.tabs .tab');
-  if (tab==='ranked') tabs[0].classList.add('active');
-  else if (tab==='scrims') tabs[1].classList.add('active');
-  else tabs[2].classList.add('active');
-}
-
-document.addEventListener('keydown', e => {
-  if (e.key==='Enter' && (document.activeElement.id==='h2h-p1'||document.activeElement.id==='h2h-p2')) searchH2H();
-});
-
-loadRanked();
-loadScrims();
-setInterval(() => { loadRanked(); loadScrims(); }, 60000);
-</script>
-</body>
-</html>
+    let w1, w2, label;                                                                                                                                                                                                                                                         
+    if (h2hMode === 'ranked') { w1=rw1; w2=rw2; label='Ranked'; }
+    else if (h2hMode === 'scrims') { w1=sw1; w2=sw2; label='Scrims'; }                                                                                                                                                                                                         
+    else { w1=rw1+sw1; w2=rw2+sw2; label='All modes'; }     
+                                                                                                                                                                                                                                                                               
+    const total = w1 + w2;                                  
+    if (total === 0) { rd.innerHTML = '<div class="h2h-no-data">No matches found between these players</div>'; rd.classList.add('visible'); return; }                                                                                                                          
+                                                                                                                                                                                                                                                                               
+    let breakdown = '';
+    if (h2hMode === 'both') {                                                                                                                                                                                                                                                  
+      const parts = [];                                                                                                                                                                                                                                                        
+      if (rw1+rw2 > 0) parts.push(`Ranked: ${rw1}-${rw2}`);
+      if (sw1+sw2 > 0) parts.push(`Scrims: ${sw1}-${sw2}`);                                                                                                                                                                                                                    
+      breakdown = `<div style="display:flex;justify-content:center;gap:24px;margin-top:12px;font-size:0.7rem;color:var(--text3)">${parts.map(p=>`<span>${p}</span>`).join('')}</div>`;
+    }                                                                                                                                                                                                                                                                          
+                                                            
+    rd.innerHTML = `                                                                                                                                                                                                                                                           
+      <div style="font-size:0.65rem;color:var(--gold-dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:12px">${label}</div>
+      <div class="h2h-matchup">                                                                                                                                                                                                                                                
+        <div class="h2h-player"><div class="h2h-player-name">${s1}</div><div class="h2h-wins">${w1}</div></div>                                                                                                                                                                
+        <div><div class="h2h-vs">VS</div><div class="h2h-vs-total">${total} matches</div></div>                                                                                                                                                                                
+        <div class="h2h-player"><div class="h2h-player-name">${s2}</div><div class="h2h-wins">${w2}</div></div>                                                                                                                                                                
+      </div>${breakdown}`;                                                                                                                                                                                                                                                     
+    rd.classList.add('visible');                                                                                                                                                                                                                                               
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  function showTab(tab) {
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));                                                                                                                                                                                        
+    document.getElementById(`tab-${tab}`).classList.add('active');
+    const tabs = document.querySelectorAll('.tabs .tab');                                                                                                                                                                                                                      
+    if (tab==='ranked') tabs[0].classList.add('active');    
+    else if (tab==='scrims') tabs[1].classList.add('active');                                                                                                                                                                                                                  
+    else tabs[2].classList.add('active');                   
+  }                                                                                                                                                                                                                                                                            
+                                                            
+  loadRanked();                                                                                                                                                                                                                                                                
+  loadScrims();                                             
+  loadAllPlayerNames().then(() => {
+    setupAutocomplete('h2h-p1', 'ac-list-1');
+    setupAutocomplete('h2h-p2', 'ac-list-2');
+  });                                                                                                                                                                                                                                                                          
+  setInterval(() => { loadRanked(); loadScrims(); }, 60000);
+  </script>                                                                                                                                                                                                                                                                    
+  </body>                                                   
+  </html>                         
