@@ -1,7 +1,7 @@
 # Leon Coach League - Discord Bot v11
-  # Vainglory ranked + scrims tracker
-  # Claude Vision + Google Sheets
-  # Bilingual EN/ES | Admin swap + delete buttons (permanent, silent)
+# Vainglory ranked + scrims tracker
+# Claude Vision + Google Sheets
+# Bilingual EN/ES | Admin swap + delete buttons (permanent, silent)
 
   import os
   import io
