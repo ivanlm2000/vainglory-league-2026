@@ -71,7 +71,7 @@ def get_tier_code(elo):
         if elo >= ts: return code
     return "1600"
 
-def compress_image(image_bytes, max_size_mb=4.5):
+def compress_image(image_bytes, max_size_mb=3.5):
     max_bytes = int(max_size_mb * 1024 * 1024)
     if len(image_bytes) <= max_bytes:
         return image_bytes, "image/png"
