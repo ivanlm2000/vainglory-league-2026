@@ -1,12 +1,11 @@
 """
-León Coach League — Discord Bot
+León Coach League — Discord Bot v4
 Vainglory ranked + scrims tracker powered by Claude Vision + Google Sheets
 """
 
 import os
 import io
 import json
-import math
 import base64
 import asyncio
 from datetime import datetime
@@ -24,29 +23,30 @@ from PIL import Image
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GOOGLE_SHEET_ID = os.environ["GOOGLE_SHEET_ID"]
-
 google_creds_json = json.loads(os.environ["GOOGLE_CREDENTIALS_JSON"])
 
 RANKED_CHANNEL = "ranked"
 SCRIMS_CHANNEL = "scrims"
-RECLAMOS_CHANNEL = "reclamos"
 
 K_FACTOR = 32
 STARTING_ELO = 1680
 MIN_ELO = 0
 MAX_ELO = 2800
 
+# Tier table: (elo_start, elo_end, tier_number, match_code)
 TIERS = [
-    (2400, 2800, "Vainglorious", "1900"),
-    (2160, 2399, "Pinnacle of Awesome", "1800"),
-    (1920, 2159, "Simply Amazing", "1700"),
-    (1680, 1919, "The Hotness", "1600"),
+    (2400, 2800, 10, "1900"),
+    (2160, 2399, 9, "1800"),
+    (1920, 2159, 8, "1700"),
+    (1680, 1919, 7, "1600"),
 ]
 
 
+# ─── HELPERS ──────────────────────────────────────────────────────────────────
+
 def get_rank(elo):
     elo = max(MIN_ELO, min(MAX_ELO, elo))
-    for tier_start, tier_end, tier_name, _ in TIERS:
+    for tier_start, tier_end, tier_num, _ in TIERS:
         if tier_start <= elo <= tier_end:
             tier_range = tier_end - tier_start + 1
             sub_size = tier_range / 3
@@ -57,10 +57,10 @@ def get_rank(elo):
                 sub = "Silver"
             else:
                 sub = "Gold"
-            return f"{tier_name} {sub}"
+            return f"T{tier_num} {sub}"
     if elo < 1680:
-        return "The Hotness Bronze"
-    return "Vainglorious Gold"
+        return "T7 Bronze"
+    return "T10 Gold"
 
 
 def calc_elo(winner_elo, loser_elo):
@@ -68,9 +68,7 @@ def calc_elo(winner_elo, loser_elo):
     expected_l = 1 - expected_w
     new_winner = round(winner_elo + K_FACTOR * (1 - expected_w))
     new_loser = round(loser_elo + K_FACTOR * (0 - expected_l))
-    new_winner = max(MIN_ELO, min(MAX_ELO, new_winner))
-    new_loser = max(MIN_ELO, min(MAX_ELO, new_loser))
-    return new_winner, new_loser
+    return max(MIN_ELO, min(MAX_ELO, new_winner)), max(MIN_ELO, min(MAX_ELO, new_loser))
 
 
 def get_tier_code(elo):
@@ -87,30 +85,26 @@ def compress_image(image_bytes, max_size_mb=4.5):
     img = Image.open(io.BytesIO(image_bytes))
     if img.mode == "RGBA":
         img = img.convert("RGB")
-    max_dimension = 2000
-    if max(img.size) > max_dimension:
-        ratio = max_dimension / max(img.size)
-        new_size = (int(img.width * ratio), int(img.height * ratio))
-        img = img.resize(new_size, Image.LANCZOS)
+    if max(img.size) > 2000:
+        ratio = 2000 / max(img.size)
+        img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
     for quality in [85, 70, 55, 40]:
         buffer = io.BytesIO()
         img.save(buffer, format="JPEG", quality=quality)
-        data = buffer.getvalue()
-        if len(data) <= max_bytes:
-            return data, "image/jpeg"
-    ratio = 0.5
-    new_size = (int(img.width * ratio), int(img.height * ratio))
-    img = img.resize(new_size, Image.LANCZOS)
+        if len(buffer.getvalue()) <= max_bytes:
+            return buffer.getvalue(), "image/jpeg"
+    img = img.resize((int(img.width * 0.5), int(img.height * 0.5)), Image.LANCZOS)
     buffer = io.BytesIO()
     img.save(buffer, format="JPEG", quality=50)
     return buffer.getvalue(), "image/jpeg"
 
 
+# ─── GOOGLE SHEETS ────────────────────────────────────────────────────────────
+
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-
 creds = Credentials.from_service_account_info(google_creds_json, scopes=SCOPES)
 gc = gspread.authorize(creds)
 spreadsheet = gc.open_by_key(GOOGLE_SHEET_ID)
@@ -163,21 +157,26 @@ def update_h2h(player1, player2, winner_name):
             else:
                 w2 += 1
             ws_h2h.update(f"C{i}:D{i}", [[w1, w2]])
-            return w1, w2
+            return
     w1 = 1 if winner_name.lower() == p1 else 0
     w2 = 1 if winner_name.lower() == p2 else 0
     ws_h2h.append_row([p1, p2, w1, w2])
-    return w1, w2
 
 
-def log_match(winner, loser, w_elo, l_elo, w_rank, l_rank, afk, capture_url):
+def log_match(winners, losers, elo_changes, afk_players, capture_url):
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
-    ws_partidas.append_row([fecha, winner, loser, w_elo, l_elo, w_rank, l_rank, afk, capture_url])
+    winners_str = ", ".join(winners)
+    losers_str = ", ".join(losers)
+    afk_str = ", ".join(afk_players) if afk_players else "No"
+    elo_str = json.dumps(elo_changes)
+    ws_partidas.append_row([fecha, winners_str, losers_str, elo_str, "", "", "", afk_str, capture_url])
 
 
-def log_scrim(team_a, team_b, winner, players_a, players_b, capture_url):
+def log_scrim(winner_team, loser_team, capture_url):
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
-    ws_scrims.append_row([fecha, team_a, team_b, winner, players_a, players_b, capture_url])
+    winners_str = ", ".join(winner_team)
+    losers_str = ", ".join(loser_team)
+    ws_scrims.append_row([fecha, "Ganador", "Perdedor", "Ganador", winners_str, losers_str, capture_url])
 
 
 def get_h2h(player1, player2):
@@ -194,13 +193,16 @@ def get_top_players(n=10):
     players = []
     for row in records[1:]:
         if row[0] and row[1]:
-            players.append({
-                "name": row[0],
-                "elo": int(row[1]),
-                "rank": row[2],
-                "wins": int(row[3]) if row[3] else 0,
-                "losses": int(row[4]) if row[4] else 0,
-            })
+            try:
+                players.append({
+                    "name": row[0],
+                    "elo": int(row[1]),
+                    "rank": row[2],
+                    "wins": int(row[3]) if row[3] else 0,
+                    "losses": int(row[4]) if row[4] else 0,
+                })
+            except ValueError:
+                continue
     players.sort(key=lambda x: x["elo"], reverse=True)
     return players[:n]
 
@@ -210,98 +212,40 @@ def get_all_scrims():
     return records[1:]
 
 
-def revert_last_match(player_name):
-    records = ws_partidas.get_all_values()
-    for i in range(len(records) - 1, 0, -1):
-        row = records[i]
-        if row[1].lower() == player_name.lower() or row[2].lower() == player_name.lower():
-            winner_name = row[1]
-            loser_name = row[2]
-            w_elo_after = int(row[3]) if row[3] else 0
-            l_elo_after = int(row[4]) if row[4] else 0
-            afk = row[7].lower() == "sí" if row[7] else False
-            w_result = get_player(winner_name)
-            l_result = get_player(loser_name)
-            if w_result and l_result:
-                w_idx, w_data = w_result
-                l_idx, l_data = l_result
-                old_w_expected = 1 / (1 + 10 ** ((l_elo_after - w_elo_after) / 400))
-                elo_gained = round(K_FACTOR * (1 - old_w_expected))
-                w_data["elo"] = max(MIN_ELO, min(MAX_ELO, w_data["elo"] - elo_gained))
-                l_data["elo"] = max(MIN_ELO, min(MAX_ELO, l_data["elo"] + elo_gained))
-                w_data["rank"] = get_rank(w_data["elo"])
-                l_data["rank"] = get_rank(l_data["elo"])
-                w_data["wins"] = max(0, w_data["wins"] - 1)
-                l_data["losses"] = max(0, l_data["losses"] - 1)
-                update_player(w_idx, w_data)
-                update_player(l_idx, l_data)
-                if not afk:
-                    h2h_records = ws_h2h.get_all_values()
-                    p1, p2 = sorted([winner_name.lower(), loser_name.lower()])
-                    for j, h_row in enumerate(h2h_records[1:], start=2):
-                        if h_row[0].lower() == p1 and h_row[1].lower() == p2:
-                            hw = int(h_row[2]) if h_row[2] else 0
-                            hl = int(h_row[3]) if h_row[3] else 0
-                            if winner_name.lower() == p1:
-                                hw = max(0, hw - 1)
-                            else:
-                                hl = max(0, hl - 1)
-                            ws_h2h.update(f"C{j}:D{j}", [[hw, hl]])
-                            break
-            ws_partidas.delete_rows(i + 1)
-            return winner_name, loser_name
-    return None
-
+# ─── CLAUDE VISION ────────────────────────────────────────────────────────────
 
 claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-RANKED_PROMPT = """Analiza esta captura de pantalla de resultado de Vainglory.
+VISION_PROMPT = """Analiza esta captura de pantalla de resultado de Vainglory.
 
 Identifica:
-1. El equipo ganador (izquierda o derecha) — el equipo ganador tiene el indicador de victoria (crown/trophy) o dice "Victoria"/"Victory". El equipo perdedor dice "Derrota"/"Defeat".
-2. Los nombres de TODOS los jugadores en ambos equipos (exactamente como aparecen)
-3. Si algún jugador tiene "Guest" en su nombre
+1. El equipo ganador y el equipo perdedor:
+   - "Victory" (azul) o "Victoria" (azul) = el equipo de la izquierda GANÓ
+   - "Defeat" (rojo) o "Derrota" (rojo) = el equipo de la izquierda PERDIÓ
+   - "Rendición" / "Surrender": si aparece en AZUL = el equipo izquierda ganó, si en ROJO = perdió
+2. Los nombres de TODOS los jugadores (3 por equipo, exactamente como aparecen)
+3. Jugadores AFK: tienen su nombre tachado y su personaje aparece más opaco/oscuro
 
 Responde SOLO en este formato JSON exacto, sin texto extra:
 {
     "winner_team": ["nombre1", "nombre2", "nombre3"],
     "loser_team": ["nombre1", "nombre2", "nombre3"],
+    "afk_players": ["nombre_afk1"],
     "has_guests": true/false
 }
 
 IMPORTANTE:
 - Los nombres deben ser EXACTOS como aparecen en la captura
-- Los nombres pueden tener prefijos como "1600_" o "1600-1_" o "1800_" — inclúyelos tal cual
-- "Guest" incluye cualquier variación como Guest_1234, Guest0, Guest0-Top25, etc.
-- Si no puedes identificar el resultado claramente, responde: {"error": "No pude leer la captura"}
-"""
-
-SCRIM_PROMPT = """Analiza esta captura de pantalla de resultado de Vainglory (scrim de equipos).
-
-Identifica:
-1. El equipo ganador (izquierda o derecha) — el equipo ganador tiene el indicador de victoria o dice "Victoria"/"Victory". El perdedor dice "Derrota"/"Defeat".
-2. Los nombres de TODOS los jugadores en ambos equipos (exactamente como aparecen)
-3. Si algún jugador tiene "Guest" en su nombre
-
-Responde SOLO en este formato JSON exacto, sin texto extra:
-{
-    "winner_team": ["nombre1", "nombre2", "nombre3"],
-    "loser_team": ["nombre1", "nombre2", "nombre3"],
-    "has_guests": true/false
-}
-
-IMPORTANTE:
-- Los nombres deben ser EXACTOS como aparecen
-- En scrims, los 6 jugadores DEBEN tener IGN real (sin Guests)
-- Si hay algún Guest, responde: {"error": "Scrim inválido: hay jugadores Guest"}
-- Si no puedes leer la captura, responde: {"error": "No pude leer la captura"}
+- Los nombres pueden tener prefijos como "1600_", "1600-1_", "1800_", "1800-2_" — inclúyelos tal cual
+- "Guest" incluye Guest_1234, Guest0, Guest0-Top25, etc.
+- afk_players es un array con los nombres de jugadores AFK (puede estar vacío [])
+- Si no puedes identificar el resultado, responde: {"error": "No pude leer la captura"}
 """
 
 
-async def analyze_screenshot(image_bytes, mode="ranked"):
+async def analyze_screenshot(image_bytes):
     compressed_bytes, media_type = compress_image(image_bytes)
     b64 = base64.b64encode(compressed_bytes).decode("utf-8")
-    prompt = RANKED_PROMPT if mode == "ranked" else SCRIM_PROMPT
     try:
         response = await asyncio.to_thread(
             claude_client.messages.create,
@@ -310,15 +254,8 @@ async def analyze_screenshot(image_bytes, mode="ranked"):
             messages=[{
                 "role": "user",
                 "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": b64,
-                        },
-                    },
-                    {"type": "text", "text": prompt},
+                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
+                    {"type": "text", "text": VISION_PROMPT},
                 ],
             }],
         )
@@ -333,10 +270,88 @@ async def analyze_screenshot(image_bytes, mode="ranked"):
         return {"error": f"Error al analizar: {str(e)}"}
 
 
+# ─── PROCESS RANKED ──────────────────────────────────────────────────────────
+
+async def process_ranked(winner_team, loser_team, afk_players, capture_url):
+    """Process a ranked match: update ELO for all 6 players."""
+    afk_set = {p.lower() for p in afk_players}
+    elo_changes = {}
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    # Filter out guests
+    winners = [p for p in winner_team if "guest" not in p.lower()]
+    losers = [p for p in loser_team if "guest" not in p.lower()]
+
+    if not winners or not losers:
+        return None, "No se encontraron jugadores válidos (sin Guest)."
+
+    # Get or create all players
+    all_names = winners + losers
+    player_data = {}
+
+    for name in all_names:
+        result = await asyncio.to_thread(get_player, name)
+        if not result:
+            await asyncio.to_thread(create_player, name)
+            result = await asyncio.to_thread(get_player, name)
+        player_data[name] = result  # (row_idx, data)
+
+    # Calculate average ELO per team for ELO calculation
+    avg_winner_elo = sum(player_data[p][1]["elo"] for p in winners) / len(winners)
+    avg_loser_elo = sum(player_data[p][1]["elo"] for p in losers) / len(losers)
+
+    # Calculate ELO change based on team averages
+    expected_w = 1 / (1 + 10 ** ((avg_loser_elo - avg_winner_elo) / 400))
+    elo_gain = round(K_FACTOR * (1 - expected_w))
+    elo_loss = round(K_FACTOR * expected_w)
+
+    # Update winners
+    for name in winners:
+        idx, data = player_data[name]
+        old_elo = data["elo"]
+        data["elo"] = min(MAX_ELO, old_elo + elo_gain)
+        data["rank"] = get_rank(data["elo"])
+        data["wins"] += 1
+        data["streak"] = max(1, data["streak"] + 1) if data["streak"] >= 0 else 1
+        data["last_match"] = now
+        elo_changes[name] = {"old": old_elo, "new": data["elo"], "diff": data["elo"] - old_elo}
+        await asyncio.to_thread(update_player, idx, data)
+
+    # Update losers
+    for name in losers:
+        idx, data = player_data[name]
+        old_elo = data["elo"]
+        is_afk = name.lower() in afk_set
+
+        if is_afk:
+            # AFK: no ELO loss, no defeat counted
+            elo_changes[name] = {"old": old_elo, "new": old_elo, "diff": 0, "afk": True}
+        else:
+            data["elo"] = max(MIN_ELO, old_elo - elo_loss)
+            data["rank"] = get_rank(data["elo"])
+            data["losses"] += 1
+            data["streak"] = min(-1, data["streak"] - 1) if data["streak"] <= 0 else -1
+            data["last_match"] = now
+            elo_changes[name] = {"old": old_elo, "new": data["elo"], "diff": data["elo"] - old_elo}
+            await asyncio.to_thread(update_player, idx, data)
+
+    # Update H2H: each winner vs each non-AFK loser
+    for w in winners:
+        for l in losers:
+            if l.lower() not in afk_set:
+                await asyncio.to_thread(update_h2h, w, l, w)
+
+    # Log match
+    await asyncio.to_thread(log_match, winners, losers, elo_changes, afk_players, capture_url)
+
+    return elo_changes, None
+
+
+# ─── DISCORD BOT ──────────────────────────────────────────────────────────────
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
@@ -358,6 +373,7 @@ async def on_message(message):
     if channel_name not in [RANKED_CHANNEL, SCRIMS_CHANNEL]:
         await bot.process_commands(message)
         return
+
     image_attachment = None
     for att in message.attachments:
         if att.content_type and att.content_type.startswith("image/"):
@@ -367,120 +383,84 @@ async def on_message(message):
         await bot.process_commands(message)
         return
 
-    is_afk = "afk" in message.content.lower()
     mode = "ranked" if channel_name == RANKED_CHANNEL else "scrim"
     submitter = message.author.display_name
     processing_msg = await message.reply("🔍 Analizando captura...")
 
     try:
         img_bytes = await image_attachment.read()
-        result = await analyze_screenshot(img_bytes, mode)
+        result = await analyze_screenshot(img_bytes)
+
         if "error" in result:
             await processing_msg.edit(content=f"❌ {result['error']}")
             return
 
         winner_team = result["winner_team"]
         loser_team = result["loser_team"]
+        afk_players = result.get("afk_players", [])
         has_guests = result.get("has_guests", False)
 
+        # ── SCRIM MODE (no ELO, just record) ──
         if mode == "scrim":
             if has_guests:
                 await processing_msg.edit(content="❌ Scrim inválido: todos los jugadores deben tener IGN (sin Guests).")
                 return
-            team_a_names = ", ".join(winner_team)
-            team_b_names = ", ".join(loser_team)
-            await asyncio.to_thread(log_scrim, "Equipo A", "Equipo B", "Equipo A", team_a_names, team_b_names, image_attachment.url)
+
+            await asyncio.to_thread(log_scrim, winner_team, loser_team, image_attachment.url)
+
             embed = discord.Embed(title="⚔️ Scrim Registrado", color=0xFFD700)
-            embed.add_field(name="🏆 Equipo Ganador", value=team_a_names, inline=False)
-            embed.add_field(name="💀 Equipo Perdedor", value=team_b_names, inline=False)
+            embed.add_field(name="🏆 Equipo Ganador", value="\n".join(winner_team), inline=True)
+            embed.add_field(name="💀 Equipo Perdedor", value="\n".join(loser_team), inline=True)
+            if afk_players:
+                embed.add_field(name="⚠️ AFK", value=", ".join(afk_players), inline=False)
             embed.set_footer(text=f"Registrado por {submitter}")
             embed.set_thumbnail(url=image_attachment.url)
             await processing_msg.edit(content=None, embed=embed)
             return
 
-        all_players = winner_team + loser_team
-        submitter_in_match = None
-        for p in all_players:
-            if p.lower() == submitter.lower():
-                submitter_in_match = p
-                break
+        # ── RANKED MODE (ELO for all 6) ──
+        elo_changes, error = await process_ranked(winner_team, loser_team, afk_players, image_attachment.url)
 
-        if submitter_in_match:
-            if submitter_in_match in winner_team:
-                winner_name = submitter_in_match
-                loser_name = None
-                for p in loser_team:
-                    if "guest" not in p.lower():
-                        loser_name = p
-                        break
-            else:
-                loser_name = submitter_in_match
-                winner_name = None
-                for p in winner_team:
-                    if "guest" not in p.lower():
-                        winner_name = p
-                        break
-        else:
-            winner_name = None
-            loser_name = None
-            for p in winner_team:
-                if "guest" not in p.lower():
-                    winner_name = p
-                    break
-            for p in loser_team:
-                if "guest" not in p.lower():
-                    loser_name = p
-                    break
-
-        if not winner_name or not loser_name:
-            await processing_msg.edit(content="❌ No pude identificar a los jugadores. Verifica que los nombres sean correctos.")
+        if error:
+            await processing_msg.edit(content=f"❌ {error}")
             return
 
-        w_result = await asyncio.to_thread(get_player, winner_name)
-        if not w_result:
-            await asyncio.to_thread(create_player, winner_name)
-            w_result = await asyncio.to_thread(get_player, winner_name)
-        w_idx, w_data = w_result
-
-        l_result = await asyncio.to_thread(get_player, loser_name)
-        if not l_result:
-            await asyncio.to_thread(create_player, loser_name)
-            l_result = await asyncio.to_thread(get_player, loser_name)
-        l_idx, l_data = l_result
-
-        old_w_elo = w_data["elo"]
-        old_l_elo = l_data["elo"]
-        new_w_elo, new_l_elo = calc_elo(old_w_elo, old_l_elo)
-
-        w_data["elo"] = new_w_elo
-        w_data["rank"] = get_rank(new_w_elo)
-        w_data["wins"] += 1
-        w_data["streak"] = max(1, w_data["streak"] + 1) if w_data["streak"] >= 0 else 1
-        w_data["last_rival"] = loser_name
-        w_data["last_match"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        await asyncio.to_thread(update_player, w_idx, w_data)
-
-        l_data["elo"] = new_l_elo
-        l_data["rank"] = get_rank(new_l_elo)
-        l_data["losses"] += 1
-        l_data["streak"] = min(-1, l_data["streak"] - 1) if l_data["streak"] <= 0 else -1
-        l_data["last_rival"] = winner_name
-        l_data["last_match"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        await asyncio.to_thread(update_player, l_idx, l_data)
-
-        if not is_afk:
-            await asyncio.to_thread(update_h2h, winner_name, loser_name, winner_name)
-
-        await asyncio.to_thread(log_match, winner_name, loser_name, new_w_elo, new_l_elo, w_data["rank"], l_data["rank"], "Sí" if is_afk else "No", image_attachment.url)
-
-        w_diff = new_w_elo - old_w_elo
-        l_diff = new_l_elo - old_l_elo
-
+        # Build embed
         embed = discord.Embed(title="🏆 Partida Ranked Registrada", color=0x00FF88)
-        embed.add_field(name=f"👑 {winner_name}", value=f"**{old_w_elo}** → **{new_w_elo}** (+{w_diff})\n{w_data['rank']}", inline=True)
-        embed.add_field(name=f"💀 {loser_name}", value=f"**{old_l_elo}** → **{new_l_elo}** ({l_diff})\n{l_data['rank']}", inline=True)
-        if is_afk:
-            embed.add_field(name="⚠️ AFK", value="No cuenta para H2H", inline=False)
+
+        # Winners column
+        winner_lines = []
+        for name in winner_team:
+            if "guest" in name.lower():
+                continue
+            ch = elo_changes.get(name, {})
+            diff = ch.get("diff", 0)
+            new_elo = ch.get("new", 0)
+            rank = get_rank(new_elo)
+            winner_lines.append(f"**{name}**\n{ch.get('old', 0)} → {new_elo} (+{diff}) | {rank}")
+
+        # Losers column
+        loser_lines = []
+        for name in loser_team:
+            if "guest" in name.lower():
+                continue
+            ch = elo_changes.get(name, {})
+            if ch.get("afk"):
+                loser_lines.append(f"**{name}** ⚠️ AFK\n{ch.get('old', 0)} (sin cambio)")
+            else:
+                diff = ch.get("diff", 0)
+                new_elo = ch.get("new", 0)
+                rank = get_rank(new_elo)
+                loser_lines.append(f"**{name}**\n{ch.get('old', 0)} → {new_elo} ({diff}) | {rank}")
+
+        embed.add_field(name="👑 Ganadores", value="\n\n".join(winner_lines) if winner_lines else "—", inline=True)
+        embed.add_field(name="💀 Perdedores", value="\n\n".join(loser_lines) if loser_lines else "—", inline=True)
+
+        # Guest notice
+        guests = [p for p in winner_team + loser_team if "guest" in p.lower()]
+        if guests:
+            embed.add_field(name="👤 Guests (ignorados)", value=", ".join(guests), inline=False)
+
         embed.set_thumbnail(url=image_attachment.url)
         embed.set_footer(text=f"Subido por {submitter}")
         await processing_msg.edit(content=None, embed=embed)
@@ -490,6 +470,8 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+
+# ─── SLASH COMMANDS ───────────────────────────────────────────────────────────
 
 @bot.tree.command(name="ranking", description="Top 10 jugadores por ELO")
 async def ranking_cmd(interaction: discord.Interaction):
@@ -527,7 +509,7 @@ async def perfil_cmd(interaction: discord.Interaction, jugador: str):
     elo = data["elo"]
     tier_code = get_tier_code(elo)
     progress_in_tier = 0
-    for tier_start, tier_end, tier_name, code in TIERS:
+    for tier_start, tier_end, tier_num, code in TIERS:
         if tier_start <= elo <= tier_end:
             progress_in_tier = ((elo - tier_start) / (tier_end - tier_start + 1)) * 100
             break
@@ -560,7 +542,7 @@ async def vs_cmd(interaction: discord.Interaction, jugador1: str, jugador2: str)
     await interaction.response.send_message(embed=embed)
 
 
-@bot.tree.command(name="scrims", description="Tabla de resultados de scrims")
+@bot.tree.command(name="scrims", description="Historial de scrims")
 async def scrims_cmd(interaction: discord.Interaction):
     records = await asyncio.to_thread(get_all_scrims)
     if not records:
@@ -571,10 +553,9 @@ async def scrims_cmd(interaction: discord.Interaction):
     lines = []
     for row in recent:
         fecha = row[0] if row[0] else "?"
-        ganador = row[3] if row[3] else "?"
-        jugadores_a = row[4] if row[4] else "?"
-        jugadores_b = row[5] if row[5] else "?"
-        lines.append(f"**{fecha}** — 🏆 {ganador}\n┗ {jugadores_a} vs {jugadores_b}")
+        jugadores_a = row[4] if len(row) > 4 else "?"
+        jugadores_b = row[5] if len(row) > 5 else "?"
+        lines.append(f"**{fecha}**\n🏆 {jugadores_a}\n💀 {jugadores_b}")
     embed.description = "\n\n".join(lines)
     embed.set_footer(text=f"Mostrando últimos {len(recent)} scrims")
     await interaction.response.send_message(embed=embed)
@@ -586,16 +567,7 @@ async def anular_cmd(interaction: discord.Interaction, jugador: str, razon: str)
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Solo administradores pueden usar este comando.", ephemeral=True)
         return
-    result = await asyncio.to_thread(revert_last_match, jugador)
-    if result:
-        winner, loser = result
-        embed = discord.Embed(title="🔄 Partida Anulada", color=0xFF0000)
-        embed.add_field(name="Partida", value=f"{winner} vs {loser}", inline=False)
-        embed.add_field(name="Razón", value=razon, inline=False)
-        embed.set_footer(text=f"Anulada por {interaction.user.display_name}")
-        await interaction.response.send_message(embed=embed)
-    else:
-        await interaction.response.send_message(f"❌ No encontré partidas recientes de **{jugador}**.")
+    await interaction.response.send_message(f"⚠️ Función de anulación en desarrollo. Contacta a un admin para ajustes manuales en Google Sheets.\nJugador: **{jugador}** | Razón: {razon}")
 
 
 if __name__ == "__main__":
