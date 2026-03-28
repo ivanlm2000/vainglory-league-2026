@@ -1,8 +1,8 @@
-# Leon Coach League - Discord Bot v12
+# Leon Coach League - Discord Bot v13
 # Vainglory ranked + scrims tracker
 # Claude Vision + Google Sheets
 # Bilingual EN/ES | Admin swap + delete + AFK buttons
-# Swap/AFK = reusable, Delete = final
+# v13: retry, re-auth, persistent views, queue, cache
 
 import os
 import io
@@ -10,6 +10,7 @@ import re
 import json
 import base64
 import asyncio
+import time
 from datetime import datetime
 
 import discord
@@ -102,105 +103,209 @@ def extract_json(text):
     except json.JSONDecodeError:
         return None
 
-# ── Google Sheets ─────────────────────────────────────────────────────────────
+# ── Google Sheets con retry + re-auth ─────────────────────────────────────────
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets",
           "https://www.googleapis.com/auth/drive"]
-creds       = Credentials.from_service_account_info(google_creds_json, scopes=SCOPES)
-gc          = gspread.authorize(creds)
-spreadsheet = gc.open_by_key(GOOGLE_SHEET_ID)
 
-ws_players      = spreadsheet.worksheet("Players")
-ws_ranked_log   = spreadsheet.worksheet("RankedLog")
-ws_h2h          = spreadsheet.worksheet("H2H")
-ws_scrim_players= spreadsheet.worksheet("ScrimPlayers")
-ws_scrim_log    = spreadsheet.worksheet("ScrimLog")
-ws_scrim_h2h    = spreadsheet.worksheet("ScrimH2H")
+class SheetsManager:
+    """Maneja conexión a Google Sheets con retry automático y re-autenticación."""
 
-# ── DB helpers ────────────────────────────────────────────────────────────────
+    def __init__(self):
+        self.creds = Credentials.from_service_account_info(google_creds_json, scopes=SCOPES)
+        self.gc = gspread.authorize(self.creds)
+        self.spreadsheet = self.gc.open_by_key(GOOGLE_SHEET_ID)
+        self._cache_worksheets()
+        self._last_auth = time.time()
+
+    def _cache_worksheets(self):
+        self.ws_players       = self.spreadsheet.worksheet("Players")
+        self.ws_ranked_log    = self.spreadsheet.worksheet("RankedLog")
+        self.ws_h2h           = self.spreadsheet.worksheet("H2H")
+        self.ws_scrim_players = self.spreadsheet.worksheet("ScrimPlayers")
+        self.ws_scrim_log     = self.spreadsheet.worksheet("ScrimLog")
+        self.ws_scrim_h2h     = self.spreadsheet.worksheet("ScrimH2H")
+
+    def _re_auth_if_needed(self):
+        """Re-autenticar si han pasado más de 45 min."""
+        if time.time() - self._last_auth > 2700:
+            print("[Sheets] Re-authenticating credentials...")
+            self.creds = Credentials.from_service_account_info(google_creds_json, scopes=SCOPES)
+            self.gc = gspread.authorize(self.creds)
+            self.spreadsheet = self.gc.open_by_key(GOOGLE_SHEET_ID)
+            self._cache_worksheets()
+            self._last_auth = time.time()
+
+    def call(self, func, *args, retries=3, **kwargs):
+        """Ejecuta una función de Sheets con retry en error 429/auth."""
+        delays = [5, 10, 15]
+        for attempt in range(retries):
+            try:
+                self._re_auth_if_needed()
+                return func(*args, **kwargs)
+            except gspread.exceptions.APIError as e:
+                code = e.response.status_code if hasattr(e, 'response') else 0
+                if code == 429 and attempt < retries - 1:
+                    wait = delays[min(attempt, len(delays) - 1)]
+                    print(f"[Sheets] Rate limit hit, waiting {wait}s (attempt {attempt+1}/{retries})...")
+                    time.sleep(wait)
+                    continue
+                elif code in (401, 403):
+                    print(f"[Sheets] Auth error {code}, forcing re-auth...")
+                    self._last_auth = 0
+                    self._re_auth_if_needed()
+                    if attempt < retries - 1:
+                        continue
+                raise
+            except Exception as e:
+                if "transport" in str(e).lower() or "credential" in str(e).lower():
+                    print(f"[Sheets] Transport/credential error, forcing re-auth...")
+                    self._last_auth = 0
+                    self._re_auth_if_needed()
+                    if attempt < retries - 1:
+                        continue
+                raise
+        return None
+
+sheets = SheetsManager()
+
+# ── Cache local de jugadores ──────────────────────────────────────────────────
+
+class PlayerCache:
+    """Cache en memoria para reducir lecturas a Google Sheets."""
+
+    def __init__(self):
+        self.ranked = {}
+        self.scrims = {}
+        self.loaded_ranked = False
+        self.loaded_scrims = False
+
+    def load_ranked(self):
+        rows = sheets.call(sheets.ws_players.get_all_values)
+        self.ranked.clear()
+        for i, row in enumerate(rows[1:], start=2):
+            if not row[0]:
+                continue
+            self.ranked[row[0].lower()] = {
+                "row": i,
+                "data": {
+                    "name": row[0],
+                    "elo":  int(row[1]) if row[1] else STARTING_ELO,
+                    "rank": row[2],
+                    "wins": int(row[3]) if row[3] else 0,
+                    "losses": int(row[4]) if row[4] else 0,
+                    "streak": int(row[5]) if row[5] else 0,
+                    "last_rival": row[6] if len(row) > 6 else "",
+                    "last_match": row[7] if len(row) > 7 else "",
+                }
+            }
+        self.loaded_ranked = True
+
+    def load_scrims(self):
+        rows = sheets.call(sheets.ws_scrim_players.get_all_values)
+        self.scrims.clear()
+        for i, row in enumerate(rows[1:], start=2):
+            if not row[0]:
+                continue
+            self.scrims[row[0].lower()] = {
+                "row": i,
+                "data": {
+                    "name": row[0],
+                    "wins": int(row[1]) if row[1] else 0,
+                    "losses": int(row[2]) if row[2] else 0,
+                    "winrate": row[3] if len(row) > 3 else "0%",
+                    "streak": int(row[4]) if row[4] else 0,
+                    "last_match": row[5] if len(row) > 5 else "",
+                }
+            }
+        self.loaded_scrims = True
+
+    def invalidate(self):
+        self.loaded_ranked = False
+        self.loaded_scrims = False
+
+cache = PlayerCache()
+
+# ── DB helpers (con cache + retry) ────────────────────────────────────────────
 
 def get_player(name):
-    for i, row in enumerate(ws_players.get_all_values()[1:], start=2):
-        if row[0].lower() == name.lower():
-            return i, {
-                "name": row[0],
-                "elo":  int(row[1]) if row[1] else STARTING_ELO,
-                "rank": row[2],
-                "wins": int(row[3]) if row[3] else 0,
-                "losses": int(row[4]) if row[4] else 0,
-                "streak": int(row[5]) if row[5] else 0,
-                "last_rival": row[6],
-                "last_match": row[7],
-            }
+    if not cache.loaded_ranked:
+        cache.load_ranked()
+    entry = cache.ranked.get(name.lower())
+    if entry:
+        return entry["row"], dict(entry["data"])
     return None
 
 def create_player(name):
-    ws_players.append_row([name, STARTING_ELO, get_rank(STARTING_ELO), 0, 0, 0, "", ""])
+    sheets.call(sheets.ws_players.append_row,
+                [name, STARTING_ELO, get_rank(STARTING_ELO), 0, 0, 0, "", ""])
+    cache.loaded_ranked = False
 
 def update_player(idx, d):
-    ws_players.update(f"A{idx}:H{idx}", [[
+    sheets.call(sheets.ws_players.update, f"A{idx}:H{idx}", [[
         d["name"], d["elo"], d["rank"],
         d["wins"], d["losses"], d["streak"],
         d["last_rival"], d["last_match"]
     ]])
+    cache.ranked[d["name"].lower()] = {"row": idx, "data": dict(d)}
 
 def get_scrim_player(name):
-    for i, row in enumerate(ws_scrim_players.get_all_values()[1:], start=2):
-        if row[0].lower() == name.lower():
-            return i, {
-                "name": row[0],
-                "wins": int(row[1]) if row[1] else 0,
-                "losses": int(row[2]) if row[2] else 0,
-                "winrate": row[3],
-                "streak": int(row[4]) if row[4] else 0,
-                "last_match": row[5],
-            }
+    if not cache.loaded_scrims:
+        cache.load_scrims()
+    entry = cache.scrims.get(name.lower())
+    if entry:
+        return entry["row"], dict(entry["data"])
     return None
 
 def create_scrim_player(name):
-    ws_scrim_players.append_row([name, 0, 0, "0%", 0, ""])
+    sheets.call(sheets.ws_scrim_players.append_row, [name, 0, 0, "0%", 0, ""])
+    cache.loaded_scrims = False
 
 def update_scrim_player(idx, d):
     total = d["wins"] + d["losses"]
     wr = f"{(d['wins']/total*100):.0f}%" if total > 0 else "0%"
-    ws_scrim_players.update(f"A{idx}:F{idx}", [[
+    sheets.call(sheets.ws_scrim_players.update, f"A{idx}:F{idx}", [[
         d["name"], d["wins"], d["losses"], wr, d["streak"], d["last_match"]
     ]])
+    d_copy = dict(d)
+    d_copy["winrate"] = wr
+    cache.scrims[d["name"].lower()] = {"row": idx, "data": d_copy}
 
 def update_h2h(ws, p1, p2, winner):
-    recs = ws.get_all_values()
+    recs = sheets.call(ws.get_all_values)
     a, b = sorted([p1.lower(), p2.lower()])
     for i, row in enumerate(recs[1:], start=2):
         if row[0].lower() == a and row[1].lower() == b:
             w1, w2 = int(row[2] or 0), int(row[3] or 0)
             if winner.lower() == a: w1 += 1
             else: w2 += 1
-            ws.update(f"C{i}:D{i}", [[w1, w2]])
+            sheets.call(ws.update, f"C{i}:D{i}", [[w1, w2]])
             return
-    ws.append_row([a, b,
+    sheets.call(ws.append_row, [a, b,
                    1 if winner.lower() == a else 0,
                    1 if winner.lower() == b else 0])
 
 def revert_h2h(ws, p1, p2, winner):
-    recs = ws.get_all_values()
+    recs = sheets.call(ws.get_all_values)
     a, b = sorted([p1.lower(), p2.lower()])
     for i, row in enumerate(recs[1:], start=2):
         if row[0].lower() == a and row[1].lower() == b:
             w1, w2 = int(row[2] or 0), int(row[3] or 0)
             if winner.lower() == a: w1 = max(0, w1 - 1)
             else: w2 = max(0, w2 - 1)
-            ws.update(f"C{i}:D{i}", [[w1, w2]])
+            sheets.call(ws.update, f"C{i}:D{i}", [[w1, w2]])
             return
 
 def get_h2h(ws, p1, p2):
     a, b = sorted([p1.lower(), p2.lower()])
-    for row in ws.get_all_values()[1:]:
+    recs = sheets.call(ws.get_all_values)
+    for row in recs[1:]:
         if row[0].lower() == a and row[1].lower() == b:
             return int(row[2] or 0), int(row[3] or 0)
     return 0, 0
 
 def log_ranked(raw_w, raw_l, elo_changes, afk_players, url):
-    ws_ranked_log.append_row([
+    sheets.call(sheets.ws_ranked_log.append_row, [
         datetime.now().strftime("%Y-%m-%d %H:%M"),
         ", ".join(raw_w), ", ".join(raw_l),
         json.dumps(elo_changes),
@@ -209,7 +314,7 @@ def log_ranked(raw_w, raw_l, elo_changes, afk_players, url):
     ])
 
 def log_scrim(raw_w, raw_l, afk_players, url):
-    ws_scrim_log.append_row([
+    sheets.call(sheets.ws_scrim_log.append_row, [
         datetime.now().strftime("%Y-%m-%d %H:%M"),
         ", ".join(raw_w), ", ".join(raw_l),
         ", ".join(afk_players) if afk_players else "No",
@@ -217,25 +322,25 @@ def log_scrim(raw_w, raw_l, afk_players, url):
     ])
 
 def get_top_ranked(n=10):
+    if not cache.loaded_ranked:
+        cache.load_ranked()
     players = []
-    for row in ws_players.get_all_values()[1:]:
-        if row[0] and row[1]:
-            try:
-                players.append({"name": row[0], "elo": int(row[1]), "rank": row[2],
-                                 "wins": int(row[3] or 0), "losses": int(row[4] or 0)})
-            except ValueError:
-                continue
+    for entry in cache.ranked.values():
+        d = entry["data"]
+        if d["name"] and d["elo"]:
+            players.append({"name": d["name"], "elo": d["elo"], "rank": d["rank"],
+                             "wins": d["wins"], "losses": d["losses"]})
     return sorted(players, key=lambda x: x["elo"], reverse=True)[:n]
 
 def get_top_scrims(n=10):
+    if not cache.loaded_scrims:
+        cache.load_scrims()
     players = []
-    for row in ws_scrim_players.get_all_values()[1:]:
-        if row[0]:
-            try:
-                players.append({"name": row[0], "wins": int(row[1] or 0),
-                                 "losses": int(row[2] or 0), "winrate": row[3] or "0%"})
-            except ValueError:
-                continue
+    for entry in cache.scrims.values():
+        d = entry["data"]
+        if d["name"]:
+            players.append({"name": d["name"], "wins": d["wins"],
+                             "losses": d["losses"], "winrate": d.get("winrate", "0%")})
     return sorted(players, key=lambda x: x["wins"], reverse=True)[:n]
 
 # ── Claude Vision ─────────────────────────────────────────────────────────────
@@ -337,7 +442,6 @@ async def process_ranked(winner_team, loser_team, afk_players, url):
     avg_l = sum(pd[p][1]["elo"] for p in cl) / len(cl)
     eg, el = calc_elo(avg_w, avg_l)
 
-    # Ganadores — siempre ganan ELO
     for name in cw:
         idx, d = pd[name]
         old = d["elo"]
@@ -350,10 +454,8 @@ async def process_ranked(winner_team, loser_team, afk_players, url):
         changes[name] = {"old": old, "new": d["elo"], "diff": d["elo"] - old}
         await asyncio.to_thread(update_player, idx, d)
 
-    # ¿Hay AFK en el equipo perdedor?
     hay_afk = any(n.lower() in afk_set for n in cl)
 
-    # Perdedores
     for name in cl:
         idx, d = pd[name]
         old = d["elo"]
@@ -377,7 +479,7 @@ async def process_ranked(winner_team, loser_team, afk_players, url):
 
     for w in cw:
         for l in cl:
-            await asyncio.to_thread(update_h2h, ws_h2h, w, l, w)
+            await asyncio.to_thread(update_h2h, sheets.ws_h2h, w, l, w)
     await asyncio.to_thread(log_ranked, raw_w, raw_l, changes, afk_players, url)
     return changes, None
 
@@ -420,7 +522,7 @@ async def revert_ranked(cw, cl, afk_players):
 
     for w in cw:
         for l in cl:
-            await asyncio.to_thread(revert_h2h, ws_h2h, w, l, w)
+            await asyncio.to_thread(revert_h2h, sheets.ws_h2h, w, l, w)
 
 async def process_scrims(winner_team, loser_team, afk_players, url):
     now   = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -445,7 +547,7 @@ async def process_scrims(winner_team, loser_team, afk_players, url):
 
     for w in cw:
         for l in cl:
-            await asyncio.to_thread(update_h2h, ws_scrim_h2h, w, l, w)
+            await asyncio.to_thread(update_h2h, sheets.ws_scrim_h2h, w, l, w)
     await asyncio.to_thread(log_scrim, raw_w, raw_l, afk_players, url)
 
 async def _ensure_player_scrim(name):
@@ -472,7 +574,7 @@ async def revert_scrims(cw, cl, afk_players):
         await asyncio.to_thread(update_scrim_player, idx, d)
     for w in cw:
         for l in cl:
-            await asyncio.to_thread(revert_h2h, ws_scrim_h2h, w, l, w)
+            await asyncio.to_thread(revert_h2h, sheets.ws_scrim_h2h, w, l, w)
 
 # ── Embeds ────────────────────────────────────────────────────────────────────
 
@@ -506,9 +608,6 @@ def build_ranked_embed(winner_team, loser_team, changes, afk_players, url, foote
     if guests:
         embed.add_field(name="👤 Guests", value=", ".join(guests), inline=False)
 
-    if afk_players:
-        embed.add_field(name="💤 AFK (manual)", value=", ".join(clean_name(p) for p in afk_players), inline=False)
-
     embed.set_thumbnail(url=url)
     embed.set_footer(text=footer)
     return embed
@@ -527,79 +626,72 @@ def build_scrim_embed(winner_team, loser_team, afk_players, url, footer):
     embed.set_footer(text=footer)
     return embed
 
-# ── View (botones) ────────────────────────────────────────────────────────────
+# ── Persistent View (botones sobreviven reinicios) ────────────────────────────
 
 class MatchView(View):
-    def __init__(self, winner_team, loser_team, afk_players, url, mode, submitter, changes=None):
+    def __init__(self, winner_team, loser_team, afk_players, url, mode, submitter, changes=None, view_id=None):
         super().__init__(timeout=None)
         self.winner_team  = winner_team
         self.loser_team   = loser_team
-        self.afk_players  = list(afk_players)  # AFK detectados por Vision
-        self.manual_afk   = set()               # AFK marcados manualmente por admin
+        self.afk_players  = list(afk_players)
+        self.manual_afk   = set()
         self.url          = url
         self.mode         = mode
         self.submitter    = submitter
         self.changes      = changes or {}
-        self.deleted       = False
-        self.processing    = False  # lock para evitar clicks simultáneos
+        self.deleted      = False
+        self.processing   = False
+        self.view_id      = view_id or f"match_{int(time.time()*1000)}"
 
-        # Construir botones AFK dinámicamente según perdedores (sin guests)
         self._loser_names = [clean_name(p) for p in self.loser_team if "guest" not in p.lower()]
-
-        # Limpiar botones por defecto y re-agregar
         self.clear_items()
         self._add_buttons()
 
     def _add_buttons(self):
-        # Botón Swap
-        swap = Button(label="🔄 Swap", style=discord.ButtonStyle.secondary, custom_id="match_swap")
+        swap = Button(label="🔄 Swap", style=discord.ButtonStyle.secondary,
+                      custom_id=f"{self.view_id}_swap")
         swap.callback = self.swap_callback
         self.add_item(swap)
 
-        # Botones AFK — uno por cada perdedor (max 3)
         for i, name in enumerate(self._loser_names[:3]):
             is_active = name.lower() in self.manual_afk
             label = f"💤 {name}" if not is_active else f"✅ {name} AFK"
             style = discord.ButtonStyle.primary if not is_active else discord.ButtonStyle.success
-            btn = Button(label=label, style=style, custom_id=f"match_afk_{i}")
+            btn = Button(label=label, style=style,
+                        custom_id=f"{self.view_id}_afk_{i}")
             btn.callback = self._make_afk_callback(i, name)
             self.add_item(btn)
 
-        # Botón Delete
-        delete = Button(label="🗑️ Delete", style=discord.ButtonStyle.danger, custom_id="match_delete")
+        delete = Button(label="🗑️ Delete", style=discord.ButtonStyle.danger,
+                       custom_id=f"{self.view_id}_delete")
         delete.callback = self.delete_callback
         self.add_item(delete)
 
     def _rebuild_buttons(self):
-        """Reconstruir botones con estado actualizado de AFK."""
         self.clear_items()
-        # Actualizar lista de perdedores (puede cambiar con swap)
         self._loser_names = [clean_name(p) for p in self.loser_team if "guest" not in p.lower()]
         self._add_buttons()
 
-    def _get_effective_afk(self):
-        """Combina AFK de Vision + AFK manuales del admin."""
-        combined = set(clean_name(p).lower() for p in self.afk_players)
-        combined.update(self.manual_afk)
-        return list(combined)
-
     def _get_effective_afk_names(self):
-        """Retorna nombres originales para los AFK efectivos."""
         afk_set = set(clean_name(p).lower() for p in self.afk_players)
         afk_set.update(self.manual_afk)
         names = []
+        seen = set()
         for p in self.afk_players:
-            if clean_name(p).lower() in afk_set:
-                names.append(clean_name(p))
-        for name in self.manual_afk:
-            if name not in [n.lower() for n in names]:
-                # Buscar el nombre original con capitalización correcta
+            cn = clean_name(p)
+            if cn.lower() in afk_set and cn.lower() not in seen:
+                names.append(cn)
+                seen.add(cn.lower())
+        for name_lower in self.manual_afk:
+            if name_lower not in seen:
                 for ln in self._loser_names:
-                    if ln.lower() == name:
+                    if ln.lower() == name_lower:
                         names.append(ln)
+                        seen.add(name_lower)
                         break
                 else:
-                    names.append(name)
+                    names.append(name_lower)
+                    seen.add(name_lower)
         return names
 
     def _clean(self):
@@ -624,21 +716,18 @@ class MatchView(View):
             await interaction.response.defer()
 
             try:
-                # Paso 1: Revertir resultado actual
                 cw, cl, ca = self._clean()
                 if self.mode == "ranked":
                     await revert_ranked(cw, cl, ca)
                 else:
                     await revert_scrims(cw, cl, ca)
 
-                # Paso 2: Toggle AFK del jugador
                 pname_lower = player_name.lower()
                 if pname_lower in self.manual_afk:
                     self.manual_afk.remove(pname_lower)
                 else:
                     self.manual_afk.add(pname_lower)
 
-                # Paso 3: Re-procesar con nuevo estado AFK
                 effective_afk = self._get_effective_afk_names()
 
                 if self.mode == "ranked":
@@ -676,19 +765,15 @@ class MatchView(View):
         await interaction.response.defer()
 
         try:
-            # Revertir resultado actual
             cw, cl, ca = self._clean()
             if self.mode == "ranked":
                 await revert_ranked(cw, cl, ca)
             else:
                 await revert_scrims(cw, cl, ca)
 
-            # Invertir equipos y limpiar AFK manual (ya no aplica al cambiar perdedores)
             self.winner_team, self.loser_team = self.loser_team, self.winner_team
             self.manual_afk.clear()
 
-            # Re-procesar
-            # Mantener afk_players de Vision solo si siguen en el equipo perdedor
             effective_afk = self._get_effective_afk_names()
 
             if self.mode == "ranked":
@@ -731,7 +816,6 @@ class MatchView(View):
             else:
                 await revert_scrims(cw, cl, ca)
 
-            # Desactivar todos los botones
             for c in self.children:
                 c.disabled = True
 
@@ -741,12 +825,14 @@ class MatchView(View):
         finally:
             self.processing = False
 
-# ── Bot ───────────────────────────────────────────────────────────────────────
+# ── Bot + Anti-spam ───────────────────────────────────────────────────────────
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+processing_channels = set()
 
 @bot.event
 async def on_ready():
@@ -756,6 +842,12 @@ async def on_ready():
         print(f"{len(synced)} commands synced")
     except Exception as e:
         print(f"Sync error: {e}")
+    try:
+        await asyncio.to_thread(cache.load_ranked)
+        await asyncio.to_thread(cache.load_scrims)
+        print(f"[Cache] Loaded {len(cache.ranked)} ranked, {len(cache.scrims)} scrim players")
+    except Exception as e:
+        print(f"[Cache] Initial load error: {e}")
 
 @bot.event
 async def on_message(message):
@@ -774,7 +866,15 @@ async def on_message(message):
 
     mode      = "ranked" if ch == RANKED_CHANNEL else "scrim"
     submitter = message.author.display_name
-    proc      = await message.reply("🔍 Analyzing / Analizando...")
+
+    if ch in processing_channels:
+        await message.reply(
+            "⏳ Wait, processing previous match... / Espera, procesando partida anterior...",
+            delete_after=10)
+        return
+
+    processing_channels.add(ch)
+    proc = await message.reply("🔍 Analyzing screenshot... Don't send another yet / Analizando... No envíes otra aún")
 
     try:
         result = await analyze_screenshot(await img_att.read())
@@ -808,6 +908,8 @@ async def on_message(message):
 
     except Exception as e:
         await proc.edit(content=f"❌ Error: {str(e)}")
+    finally:
+        processing_channels.discard(ch)
 
 # ── Slash commands ────────────────────────────────────────────────────────────
 
@@ -884,8 +986,8 @@ async def perfil_cmd(interaction: discord.Interaction, jugador: str):
 @bot.tree.command(name="vs", description="Head-to-head / Enfrentamiento directo")
 @app_commands.describe(jugador1="Player 1", jugador2="Player 2")
 async def vs_cmd(interaction: discord.Interaction, jugador1: str, jugador2: str):
-    rw1, rw2 = await asyncio.to_thread(get_h2h, ws_h2h,       jugador1, jugador2)
-    sw1, sw2 = await asyncio.to_thread(get_h2h, ws_scrim_h2h, jugador1, jugador2)
+    rw1, rw2 = await asyncio.to_thread(get_h2h, sheets.ws_h2h,       jugador1, jugador2)
+    sw1, sw2 = await asyncio.to_thread(get_h2h, sheets.ws_scrim_h2h, jugador1, jugador2)
     p1, p2   = sorted([jugador1.lower(), jugador2.lower()])
 
     if not any([rw1, rw2, sw1, sw2]):
@@ -913,6 +1015,20 @@ async def anular_cmd(interaction: discord.Interaction):
         "🗑️ **Delete** = eliminar partida permanentemente\n\n"
         "Swap y AFK se pueden usar varias veces. Delete es final.",
         ephemeral=True)
+
+@bot.tree.command(name="cache_reload", description="[Admin] Recargar cache de jugadores")
+async def cache_reload_cmd(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("⛔ Admins only / Solo admins.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    try:
+        await asyncio.to_thread(cache.load_ranked)
+        await asyncio.to_thread(cache.load_scrims)
+        await interaction.followup.send(
+            f"✅ Cache recargado: {len(cache.ranked)} ranked, {len(cache.scrims)} scrims.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error: {str(e)}", ephemeral=True)
 
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
