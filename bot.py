@@ -1,8 +1,8 @@
-# Leon Coach League - Discord Bot v13
+# Leon Coach League - Discord Bot v14
 # Vainglory ranked + scrims tracker
 # Claude Vision + Google Sheets
-# Bilingual EN/ES | Admin swap + delete + AFK buttons
-# v13: retry, re-auth, persistent views, queue, cache
+# Bilingual EN/ES | Admin swap + delete + AFK + EDIT buttons
+# v14: Edit Names modal for OCR corrections
 
 import os
 import io
@@ -16,7 +16,7 @@ from datetime import datetime
 import discord
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import Button, View
+from discord.ui import Button, View, Modal, TextInput
 import gspread
 from google.oauth2.service_account import Credentials
 import anthropic
@@ -633,6 +633,118 @@ def build_scrim_embed(winner_team, loser_team, afk_players, url, footer):
     embed.set_footer(text=footer)
     return embed
 
+# ── Edit Names Modal ──────────────────────────────────────────────────────────
+
+class EditNamesModal(Modal):
+    """Modal para corregir nombres mal leídos por la IA."""
+
+    def __init__(self, match_view: 'MatchView'):
+        super().__init__(title="✏️ Edit Names / Editar Nombres")
+        self.match_view = match_view
+
+        # Pre-llenar con nombres actuales (sin guests)
+        current_winners = [p for p in match_view.winner_team if "guest" not in p.lower()]
+        current_losers  = [p for p in match_view.loser_team  if "guest" not in p.lower()]
+
+        self.winners_input = TextInput(
+            label="Winners / Ganadores (one per line)",
+            style=discord.TextStyle.paragraph,
+            default="\n".join(current_winners),
+            placeholder="Player1\nPlayer2\nPlayer3",
+            required=True,
+            max_length=300
+        )
+        self.losers_input = TextInput(
+            label="Losers / Perdedores (one per line)",
+            style=discord.TextStyle.paragraph,
+            default="\n".join(current_losers),
+            placeholder="Player1\nPlayer2\nPlayer3",
+            required=True,
+            max_length=300
+        )
+
+        self.add_item(self.winners_input)
+        self.add_item(self.losers_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        mv = self.match_view
+
+        if mv.deleted:
+            await interaction.response.send_message("⚠️ Match deleted / Partida eliminada.", ephemeral=True)
+            return
+        if mv.processing:
+            await interaction.response.send_message("⏳ Processing... / Procesando...", ephemeral=True)
+            return
+
+        # Parsear nombres nuevos (quitar líneas vacías y espacios)
+        new_winners = [n.strip() for n in self.winners_input.value.strip().split("\n") if n.strip()]
+        new_losers  = [n.strip() for n in self.losers_input.value.strip().split("\n") if n.strip()]
+
+        if not new_winners or not new_losers:
+            await interaction.response.send_message(
+                "❌ Both teams need at least 1 player / Ambos equipos necesitan al menos 1 jugador.",
+                ephemeral=True)
+            return
+
+        mv.processing = True
+        await interaction.response.defer()
+
+        try:
+            # 1) Revertir con nombres actuales
+            cw_old, cl_old, ca_old = mv._clean()
+            if mv.mode == "ranked":
+                await revert_ranked(cw_old, cl_old, ca_old)
+            else:
+                await revert_scrims(cw_old, cl_old, ca_old)
+
+            # 2) Reconstruir listas de guests originales
+            old_winner_guests = [p for p in mv.winner_team if "guest" in p.lower()]
+            old_loser_guests  = [p for p in mv.loser_team  if "guest" in p.lower()]
+
+            # 3) Actualizar equipos con nombres corregidos + guests
+            mv.winner_team = new_winners + old_winner_guests
+            mv.loser_team  = new_losers  + old_loser_guests
+
+            # 4) Actualizar AFK: mantener solo los que siguen existiendo en el equipo perdedor
+            new_loser_lower = {clean_name(p).lower() for p in new_losers}
+            mv.manual_afk = {n for n in mv.manual_afk if n in new_loser_lower}
+            # Filtrar afk_players originales que ya no existen
+            mv.afk_players = [p for p in mv.afk_players
+                              if clean_name(p).lower() in new_loser_lower or
+                                 clean_name(p).lower() in {clean_name(w).lower() for w in new_winners}]
+
+            effective_afk = mv._get_effective_afk_names()
+
+            # 5) Re-procesar con nombres corregidos
+            if mv.mode == "ranked":
+                cache.invalidate()  # Forzar recarga para nombres nuevos
+                mv.changes, err = await process_ranked(
+                    mv.winner_team, mv.loser_team, effective_afk, mv.url)
+                if err:
+                    await interaction.followup.send(f"❌ {err}", ephemeral=True)
+                    return
+                embed = build_ranked_embed(
+                    mv.winner_team, mv.loser_team, mv.changes,
+                    effective_afk, mv.url,
+                    f"By / Por {mv.submitter} | ✏️ Edited by / Editado por {interaction.user.display_name}")
+            else:
+                cache.invalidate()
+                await process_scrims(
+                    mv.winner_team, mv.loser_team, effective_afk, mv.url)
+                embed = build_scrim_embed(
+                    mv.winner_team, mv.loser_team, effective_afk,
+                    mv.url,
+                    f"By / Por {mv.submitter} | ✏️ Edited by / Editado por {interaction.user.display_name}")
+
+            # 6) Rebuild botones con nuevos nombres
+            mv._rebuild_buttons()
+            await interaction.edit_original_response(embed=embed, view=mv)
+
+        except Exception as e:
+            await interaction.followup.send(f"❌ Edit error: {str(e)}", ephemeral=True)
+        finally:
+            mv.processing = False
+
 # ── Persistent View (botones sobreviven reinicios) ────────────────────────────
 
 class MatchView(View):
@@ -659,6 +771,11 @@ class MatchView(View):
                       custom_id=f"{self.view_id}_swap")
         swap.callback = self.swap_callback
         self.add_item(swap)
+
+        edit = Button(label="✏️ Edit", style=discord.ButtonStyle.secondary,
+                      custom_id=f"{self.view_id}_edit")
+        edit.callback = self.edit_callback
+        self.add_item(edit)
 
         for i, name in enumerate(self._loser_names[:3]):
             is_active = name.lower() in self.manual_afk
@@ -800,6 +917,20 @@ class MatchView(View):
             await interaction.edit_original_response(embed=embed, view=self)
         finally:
             self.processing = False
+
+    async def edit_callback(self, interaction: discord.Interaction):
+        """Abre el modal para editar nombres."""
+        if not is_bot_admin(interaction.user):
+            await interaction.response.send_message("⛔ Admins only / Solo admins.", ephemeral=True)
+            return
+        if self.deleted:
+            await interaction.response.send_message("⚠️ Match deleted / Partida eliminada.", ephemeral=True)
+            return
+        if self.processing:
+            await interaction.response.send_message("⏳ Processing... / Procesando...", ephemeral=True)
+            return
+        # Enviar el modal (no requiere defer, send_modal es la response)
+        await interaction.response.send_modal(EditNamesModal(self))
 
     async def delete_callback(self, interaction: discord.Interaction):
         if not is_bot_admin(interaction.user):
@@ -1018,9 +1149,10 @@ async def anular_cmd(interaction: discord.Interaction):
         return
     await interaction.response.send_message(
         "🔄 **Swap** = invertir ganadores/perdedores (reutilizable)\n"
+        "✏️ **Edit** = corregir nombres mal leídos por la IA (abre formulario)\n"
         "💤 **AFK [nombre]** = marcar/desmarcar jugador como AFK (toggle, protege ELO)\n"
         "🗑️ **Delete** = eliminar partida permanentemente\n\n"
-        "Swap y AFK se pueden usar varias veces. Delete es final.",
+        "Swap, Edit y AFK se pueden usar varias veces. Delete es final.",
         ephemeral=True)
 
 @bot.tree.command(name="cache_reload", description="[Admin] Recargar cache de jugadores")
