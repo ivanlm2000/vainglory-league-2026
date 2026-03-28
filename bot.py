@@ -1,7 +1,8 @@
-# Leon Coach League - Discord Bot v11
+# Leon Coach League - Discord Bot v12
 # Vainglory ranked + scrims tracker
 # Claude Vision + Google Sheets
-# Bilingual EN/ES | Admin swap + delete buttons (permanent, silent)
+# Bilingual EN/ES | Admin swap + delete + AFK buttons
+# Swap/AFK = reusable, Delete = final
 
 import os
 import io
@@ -362,15 +363,12 @@ async def process_ranked(winner_team, loser_team, afk_players, url):
         d["last_rival"] = ", ".join(cw)
 
         if name.lower() in afk_set:
-            # Se fue AFK → pierde ELO (penalización extra)
             d["elo"]  = max(MIN_ELO, old - el)
             d["rank"] = get_rank(d["elo"])
             changes[name] = {"old": old, "new": d["elo"], "diff": d["elo"] - old, "afk": True}
         elif hay_afk:
-            # Se quedó jugando con compañero AFK → protegido, no pierde ELO
             changes[name] = {"old": old, "new": old, "diff": 0, "protected": True}
         else:
-            # Derrota normal → pierde ELO
             d["elo"]  = max(MIN_ELO, old - el)
             d["rank"] = get_rank(d["elo"])
             changes[name] = {"old": old, "new": d["elo"], "diff": d["elo"] - old}
@@ -418,7 +416,6 @@ async def revert_ranked(cw, cl, afk_players):
         elif not hay_afk:
             d["elo"]  = min(MAX_ELO, d["elo"] + el)
             d["rank"] = get_rank(d["elo"])
-        # protegido → no se toca el ELO
         await asyncio.to_thread(update_player, idx, d)
 
     for w in cw:
@@ -479,7 +476,7 @@ async def revert_scrims(cw, cl, afk_players):
 
 # ── Embeds ────────────────────────────────────────────────────────────────────
 
-def build_ranked_embed(winner_team, loser_team, changes, url, footer):
+def build_ranked_embed(winner_team, loser_team, changes, afk_players, url, footer):
     embed = discord.Embed(
         title="🏆 Ranked match registered / Partida ranked registrada",
         color=0x00FF88)
@@ -509,6 +506,9 @@ def build_ranked_embed(winner_team, loser_team, changes, url, footer):
     if guests:
         embed.add_field(name="👤 Guests", value=", ".join(guests), inline=False)
 
+    if afk_players:
+        embed.add_field(name="💤 AFK (manual)", value=", ".join(clean_name(p) for p in afk_players), inline=False)
+
     embed.set_thumbnail(url=url)
     embed.set_footer(text=footer)
     return embed
@@ -532,67 +532,214 @@ def build_scrim_embed(winner_team, loser_team, afk_players, url, footer):
 class MatchView(View):
     def __init__(self, winner_team, loser_team, afk_players, url, mode, submitter, changes=None):
         super().__init__(timeout=None)
-        self.winner_team = winner_team
-        self.loser_team  = loser_team
-        self.afk_players = afk_players
-        self.url         = url
-        self.mode        = mode
-        self.submitter   = submitter
-        self.changes     = changes or {}
-        self.acted       = False
+        self.winner_team  = winner_team
+        self.loser_team   = loser_team
+        self.afk_players  = list(afk_players)  # AFK detectados por Vision
+        self.manual_afk   = set()               # AFK marcados manualmente por admin
+        self.url          = url
+        self.mode         = mode
+        self.submitter    = submitter
+        self.changes      = changes or {}
+        self.deleted       = False
+        self.processing    = False  # lock para evitar clicks simultáneos
+
+        # Construir botones AFK dinámicamente según perdedores (sin guests)
+        self._loser_names = [clean_name(p) for p in self.loser_team if "guest" not in p.lower()]
+
+        # Limpiar botones por defecto y re-agregar
+        self.clear_items()
+        self._add_buttons()
+
+    def _add_buttons(self):
+        # Botón Swap
+        swap = Button(label="🔄 Swap", style=discord.ButtonStyle.secondary, custom_id="match_swap")
+        swap.callback = self.swap_callback
+        self.add_item(swap)
+
+        # Botones AFK — uno por cada perdedor (max 3)
+        for i, name in enumerate(self._loser_names[:3]):
+            is_active = name.lower() in self.manual_afk
+            label = f"💤 {name}" if not is_active else f"✅ {name} AFK"
+            style = discord.ButtonStyle.primary if not is_active else discord.ButtonStyle.success
+            btn = Button(label=label, style=style, custom_id=f"match_afk_{i}")
+            btn.callback = self._make_afk_callback(i, name)
+            self.add_item(btn)
+
+        # Botón Delete
+        delete = Button(label="🗑️ Delete", style=discord.ButtonStyle.danger, custom_id="match_delete")
+        delete.callback = self.delete_callback
+        self.add_item(delete)
+
+    def _rebuild_buttons(self):
+        """Reconstruir botones con estado actualizado de AFK."""
+        self.clear_items()
+        # Actualizar lista de perdedores (puede cambiar con swap)
+        self._loser_names = [clean_name(p) for p in self.loser_team if "guest" not in p.lower()]
+        self._add_buttons()
+
+    def _get_effective_afk(self):
+        """Combina AFK de Vision + AFK manuales del admin."""
+        combined = set(clean_name(p).lower() for p in self.afk_players)
+        combined.update(self.manual_afk)
+        return list(combined)
+
+    def _get_effective_afk_names(self):
+        """Retorna nombres originales para los AFK efectivos."""
+        afk_set = set(clean_name(p).lower() for p in self.afk_players)
+        afk_set.update(self.manual_afk)
+        names = []
+        for p in self.afk_players:
+            if clean_name(p).lower() in afk_set:
+                names.append(clean_name(p))
+        for name in self.manual_afk:
+            if name not in [n.lower() for n in names]:
+                # Buscar el nombre original con capitalización correcta
+                for ln in self._loser_names:
+                    if ln.lower() == name:
+                        names.append(ln)
+                        break
+                else:
+                    names.append(name)
+        return names
 
     def _clean(self):
         cw = [clean_name(p) for p in self.winner_team if "guest" not in p.lower()]
         cl = [clean_name(p) for p in self.loser_team  if "guest" not in p.lower()]
-        ca = [clean_name(p) for p in self.afk_players]
+        ca = self._get_effective_afk_names()
         return cw, cl, ca
 
-    @discord.ui.button(label="🔄 Swap", style=discord.ButtonStyle.secondary)
-    async def swap_btn(self, interaction: discord.Interaction, button: Button):
+    def _make_afk_callback(self, index, player_name):
+        async def callback(interaction: discord.Interaction):
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("⛔ Admins only / Solo admins.", ephemeral=True)
+                return
+            if self.deleted:
+                await interaction.response.send_message("⚠️ Match deleted / Partida eliminada.", ephemeral=True)
+                return
+            if self.processing:
+                await interaction.response.send_message("⏳ Processing... / Procesando...", ephemeral=True)
+                return
+
+            self.processing = True
+            await interaction.response.defer()
+
+            try:
+                # Paso 1: Revertir resultado actual
+                cw, cl, ca = self._clean()
+                if self.mode == "ranked":
+                    await revert_ranked(cw, cl, ca)
+                else:
+                    await revert_scrims(cw, cl, ca)
+
+                # Paso 2: Toggle AFK del jugador
+                pname_lower = player_name.lower()
+                if pname_lower in self.manual_afk:
+                    self.manual_afk.remove(pname_lower)
+                else:
+                    self.manual_afk.add(pname_lower)
+
+                # Paso 3: Re-procesar con nuevo estado AFK
+                effective_afk = self._get_effective_afk_names()
+
+                if self.mode == "ranked":
+                    self.changes, _ = await process_ranked(
+                        self.winner_team, self.loser_team, effective_afk, self.url)
+                    embed = build_ranked_embed(
+                        self.winner_team, self.loser_team, self.changes,
+                        effective_afk, self.url, f"By / Por {self.submitter}")
+                else:
+                    await process_scrims(
+                        self.winner_team, self.loser_team, effective_afk, self.url)
+                    embed = build_scrim_embed(
+                        self.winner_team, self.loser_team, effective_afk,
+                        self.url, f"By / Por {self.submitter}")
+
+                self._rebuild_buttons()
+                await interaction.edit_original_response(embed=embed, view=self)
+            finally:
+                self.processing = False
+
+        return callback
+
+    async def swap_callback(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("⛔ Admins only / Solo admins.", ephemeral=True)
             return
-        if self.acted:
-            await interaction.response.send_message("⚠️ Already modified / Ya modificado.", ephemeral=True)
+        if self.deleted:
+            await interaction.response.send_message("⚠️ Match deleted / Partida eliminada.", ephemeral=True)
             return
-        self.acted = True
-        for c in self.children: c.disabled = True
+        if self.processing:
+            await interaction.response.send_message("⏳ Processing... / Procesando...", ephemeral=True)
+            return
+
+        self.processing = True
         await interaction.response.defer()
 
-        cw, cl, ca = self._clean()
-        if self.mode == "ranked": await revert_ranked(cw, cl, ca)
-        else:                     await revert_scrims(cw, cl, ca)
+        try:
+            # Revertir resultado actual
+            cw, cl, ca = self._clean()
+            if self.mode == "ranked":
+                await revert_ranked(cw, cl, ca)
+            else:
+                await revert_scrims(cw, cl, ca)
 
-        self.winner_team, self.loser_team = self.loser_team, self.winner_team
+            # Invertir equipos y limpiar AFK manual (ya no aplica al cambiar perdedores)
+            self.winner_team, self.loser_team = self.loser_team, self.winner_team
+            self.manual_afk.clear()
 
-        if self.mode == "ranked":
-            self.changes, _ = await process_ranked(self.winner_team, self.loser_team, self.afk_players, self.url)
-            embed = build_ranked_embed(self.winner_team, self.loser_team, self.changes, self.url, f"By / Por {self.submitter}")
-        else:
-            await process_scrims(self.winner_team, self.loser_team, self.afk_players, self.url)
-            embed = build_scrim_embed(self.winner_team, self.loser_team, self.afk_players, self.url, f"By / Por {self.submitter}")
+            # Re-procesar
+            # Mantener afk_players de Vision solo si siguen en el equipo perdedor
+            effective_afk = self._get_effective_afk_names()
 
-        await interaction.edit_original_response(embed=embed, view=self)
+            if self.mode == "ranked":
+                self.changes, _ = await process_ranked(
+                    self.winner_team, self.loser_team, effective_afk, self.url)
+                embed = build_ranked_embed(
+                    self.winner_team, self.loser_team, self.changes,
+                    effective_afk, self.url, f"By / Por {self.submitter}")
+            else:
+                await process_scrims(
+                    self.winner_team, self.loser_team, effective_afk, self.url)
+                embed = build_scrim_embed(
+                    self.winner_team, self.loser_team, effective_afk,
+                    self.url, f"By / Por {self.submitter}")
 
-    @discord.ui.button(label="🗑️ Delete", style=discord.ButtonStyle.danger)
-    async def delete_btn(self, interaction: discord.Interaction, button: Button):
+            self._rebuild_buttons()
+            await interaction.edit_original_response(embed=embed, view=self)
+        finally:
+            self.processing = False
+
+    async def delete_callback(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("⛔ Admins only / Solo admins.", ephemeral=True)
             return
-        if self.acted:
-            await interaction.response.send_message("⚠️ Already modified / Ya modificado.", ephemeral=True)
+        if self.deleted:
+            await interaction.response.send_message("⚠️ Already deleted / Ya eliminada.", ephemeral=True)
             return
-        self.acted = True
-        for c in self.children: c.disabled = True
+        if self.processing:
+            await interaction.response.send_message("⏳ Processing... / Procesando...", ephemeral=True)
+            return
+
+        self.processing = True
+        self.deleted = True
         await interaction.response.defer()
 
-        cw, cl, ca = self._clean()
-        if self.mode == "ranked": await revert_ranked(cw, cl, ca)
-        else:                     await revert_scrims(cw, cl, ca)
+        try:
+            cw, cl, ca = self._clean()
+            if self.mode == "ranked":
+                await revert_ranked(cw, cl, ca)
+            else:
+                await revert_scrims(cw, cl, ca)
 
-        embed = discord.Embed(title="🗑️ Match removed / Partida eliminada", color=0x666666)
-        embed.set_thumbnail(url=self.url)
-        await interaction.edit_original_response(embed=embed, view=self)
+            # Desactivar todos los botones
+            for c in self.children:
+                c.disabled = True
+
+            embed = discord.Embed(title="🗑️ Match removed / Partida eliminada", color=0x666666)
+            embed.set_thumbnail(url=self.url)
+            await interaction.edit_original_response(embed=embed, view=self)
+        finally:
+            self.processing = False
 
 # ── Bot ───────────────────────────────────────────────────────────────────────
 
@@ -615,7 +762,6 @@ async def on_message(message):
     if message.author.bot: return
     ch = message.channel.name
 
-    # Solo actuar en canales ranked/scrims con imagen
     if ch not in [RANKED_CHANNEL, SCRIMS_CHANNEL]:
         await bot.process_commands(message)
         return
@@ -626,7 +772,6 @@ async def on_message(message):
         await bot.process_commands(message)
         return
 
-    # A partir de aquí manejamos la imagen — NO llamar process_commands después
     mode      = "ranked" if ch == RANKED_CHANNEL else "scrim"
     submitter = message.author.display_name
     proc      = await message.reply("🔍 Analyzing / Analizando...")
@@ -657,7 +802,7 @@ async def on_message(message):
         if error:
             await proc.edit(content=f"❌ {error}")
             return
-        embed = build_ranked_embed(wt, lt, changes, img_att.url, f"By / Por {submitter}")
+        embed = build_ranked_embed(wt, lt, changes, afk, img_att.url, f"By / Por {submitter}")
         view  = MatchView(wt, lt, afk, img_att.url, mode, submitter, changes)
         await proc.edit(content=None, embed=embed, view=view)
 
@@ -763,9 +908,10 @@ async def anular_cmd(interaction: discord.Interaction):
         await interaction.response.send_message("⛔ Admins only / Solo admins.", ephemeral=True)
         return
     await interaction.response.send_message(
-        "🔄 **Swap** = invertir ganadores/perdedores | invert winners/losers\n"
-        "🗑️ **Delete** = eliminar partida | remove match\n\n"
-        "Usa los botones en cada partida / Use the buttons on each match.",
+        "🔄 **Swap** = invertir ganadores/perdedores (reutilizable)\n"
+        "💤 **AFK [nombre]** = marcar/desmarcar jugador como AFK (toggle, protege ELO)\n"
+        "🗑️ **Delete** = eliminar partida permanentemente\n\n"
+        "Swap y AFK se pueden usar varias veces. Delete es final.",
         ephemeral=True)
 
 if __name__ == "__main__":
