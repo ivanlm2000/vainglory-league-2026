@@ -29,6 +29,13 @@ google_creds_json = json.loads(os.environ["GOOGLE_CREDENTIALS_JSON"])
 
 RANKED_CHANNEL = "ranked"
 SCRIMS_CHANNEL = "scrims"
+BOT_ADMIN_ROLE = "bot admin"
+
+def is_bot_admin(user: discord.Member) -> bool:
+    """Checa si el usuario tiene el rol 'bot admin' O es Administrador del servidor."""
+    if user.guild_permissions.administrator:
+        return True
+    return any(role.name.lower() == BOT_ADMIN_ROLE.lower() for role in user.roles)
 
 K_FACTOR = 32
 STARTING_ELO = 1680
@@ -702,7 +709,7 @@ class MatchView(View):
 
     def _make_afk_callback(self, index, player_name):
         async def callback(interaction: discord.Interaction):
-            if not interaction.user.guild_permissions.administrator:
+            if not is_bot_admin(interaction.user):
                 await interaction.response.send_message("⛔ Admins only / Solo admins.", ephemeral=True)
                 return
             if self.deleted:
@@ -751,7 +758,7 @@ class MatchView(View):
         return callback
 
     async def swap_callback(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.administrator:
+        if not is_bot_admin(interaction.user):
             await interaction.response.send_message("⛔ Admins only / Solo admins.", ephemeral=True)
             return
         if self.deleted:
@@ -795,7 +802,7 @@ class MatchView(View):
             self.processing = False
 
     async def delete_callback(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.administrator:
+        if not is_bot_admin(interaction.user):
             await interaction.response.send_message("⛔ Admins only / Solo admins.", ephemeral=True)
             return
         if self.deleted:
@@ -1006,7 +1013,7 @@ async def vs_cmd(interaction: discord.Interaction, jugador1: str, jugador2: str)
 
 @bot.tree.command(name="anular", description="[Admin] Info sobre controles de partida")
 async def anular_cmd(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
+    if not is_bot_admin(interaction.user):
         await interaction.response.send_message("⛔ Admins only / Solo admins.", ephemeral=True)
         return
     await interaction.response.send_message(
@@ -1018,7 +1025,7 @@ async def anular_cmd(interaction: discord.Interaction):
 
 @bot.tree.command(name="cache_reload", description="[Admin] Recargar cache de jugadores")
 async def cache_reload_cmd(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
+    if not is_bot_admin(interaction.user):
         await interaction.response.send_message("⛔ Admins only / Solo admins.", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
