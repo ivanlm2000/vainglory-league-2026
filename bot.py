@@ -754,26 +754,6 @@ def build_ranked_embed(winner_team, loser_team, changes, afk_players, url, foote
 def build_scrim_embed(winner_team, loser_team, afk_players, url, footer, mode="3v3"):
     label = "3v3" if mode == "3v3" else "5v5"
     color = 0xFFD700 if mode == "3v3" else 0x8844FF
-
-    if mode == "5v5":
-        cw = [clean_name(p) for p in winner_team if "guest" not in p.lower()]
-        cl = [clean_name(p) for p in loser_team  if "guest" not in p.lower()]
-        lines = []
-        lines.append("**Winners / Ganadores**")
-        lines.append(", ".join(cw) if cw else "-")
-        lines.append("")
-        lines.append("**Losers / Perdedores**")
-        lines.append(", ".join(cl) if cl else "-")
-        if afk_players:
-            lines.append("")
-            lines.append(f"**AFK:** {', '.join(clean_name(p) for p in afk_players)}")
-        embed = discord.Embed(
-            title=f"⚔️ Scrim {label} registered / Scrim {label} registrado",
-            description="\n".join(lines), color=color)
-        embed.set_thumbnail(url=url)
-        embed.set_footer(text=footer)
-        return embed
-
     embed = discord.Embed(
         title=f"⚔️ Scrim {label} registered / Scrim {label} registrado", color=color)
     wn = "\n".join(f"🟢 **{clean_name(p)}**" for p in winner_team if "guest" not in p.lower())
@@ -1060,10 +1040,20 @@ async def on_message(message):
         if mode == "scrim":
             if guests:
                 await proc.edit(content="❌ Invalid scrim: Guests not allowed / Sin Guests."); return
+            print(f"[DEBUG] Processing scrim {scrim_mode}: winners={wt}, losers={lt}")
             await process_scrims(wt, lt, afk, img_att.url, mode=scrim_mode)
+            print(f"[DEBUG] Scrims processed OK, building embed...")
             embed = build_scrim_embed(wt, lt, afk, img_att.url, f"By / Por {submitter}", mode=scrim_mode)
             view  = MatchView(wt, lt, afk, img_att.url, mode, submitter, scrim_mode=scrim_mode)
-            await proc.edit(content=None, embed=embed, view=view)
+            print(f"[DEBUG] Embed built: title={embed.title}, fields={len(embed.fields)}, color={embed.color}")
+            print(f"[DEBUG] View buttons: {len(view.children)}")
+            try:
+                await proc.edit(content=None, embed=embed, view=view)
+                print(f"[DEBUG] proc.edit SUCCESS for {scrim_mode}")
+            except Exception as edit_err:
+                print(f"[DEBUG] proc.edit FAILED for {scrim_mode}: {edit_err}")
+                import traceback
+                traceback.print_exc()
             return
 
         changes, error = await process_ranked(wt, lt, afk, img_att.url)
