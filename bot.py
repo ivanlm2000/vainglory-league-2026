@@ -2,7 +2,7 @@
 # Vainglory ranked + scrims tracker
 # Claude Vision + Google Sheets
 # Bilingual EN/ES | Admin swap + delete + AFK + EDIT buttons
-# v15: Renamed channels (matches, 3v3, 5v5), dynamic Vision prompt, separate 5v5 sheets
+# v15: Batch writes to Sheets, 5v5 support, renamed channels
 
 import os
 import io
@@ -27,11 +27,9 @@ ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GOOGLE_SHEET_ID = os.environ["GOOGLE_SHEET_ID"]
 google_creds_json = json.loads(os.environ["GOOGLE_CREDENTIALS_JSON"])
 
-# ── Channel names ─────────────────────────────────────────────────────────────
 RANKED_CHANNEL = "matches"
 SCRIMS_3V3_CHANNEL = "3v3"
 SCRIMS_5V5_CHANNEL = "5v5"
-
 BOT_ADMIN_ROLE = "bot admin"
 
 def is_bot_admin(user: discord.Member) -> bool:
@@ -110,6 +108,8 @@ def extract_json(text):
     except json.JSONDecodeError:
         return None
 
+# ── Google Sheets ─────────────────────────────────────────────────────────────
+
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets",
           "https://www.googleapis.com/auth/drive"]
 
@@ -171,7 +171,33 @@ class SheetsManager:
                 raise
         return None
 
+    def batch_update_cells(self, ws, updates):
+        """Batch update: updates = list of {"range": "A2:H2", "values": [[...]]}
+        Hace UNA sola llamada a la API en vez de N."""
+        if not updates:
+            return
+        self._re_auth_if_needed()
+        body = []
+        for u in updates:
+            body.append({
+                "range": f"{ws.title}!{u['range']}",
+                "values": u["values"]
+            })
+        self.spreadsheet.values_batch_update(body={
+            "valueInputOption": "RAW",
+            "data": body
+        })
+
+    def batch_append_rows(self, ws, rows):
+        """Append múltiples filas en UNA sola llamada."""
+        if not rows:
+            return
+        self._re_auth_if_needed()
+        ws.append_rows(rows, value_input_option="RAW")
+
 sheets = SheetsManager()
+
+# ── Cache ─────────────────────────────────────────────────────────────────────
 
 class PlayerCache:
     def __init__(self):
@@ -235,6 +261,8 @@ class PlayerCache:
 
 cache = PlayerCache()
 
+# ── DB helpers ────────────────────────────────────────────────────────────────
+
 def get_player(name):
     if not cache.loaded_ranked: cache.load_ranked()
     entry = cache.ranked.get(name.lower())
@@ -258,12 +286,13 @@ def create_scrim_player(name):
     sheets.call(sheets.ws_scrim_players.append_row, [name, 0, 0, "0%", 0, ""])
     cache.loaded_scrims = False
 
-def update_scrim_player(idx, d):
+def update_scrim_player_cache(idx, d):
+    """Solo actualiza cache, NO escribe a Sheets (para batch)."""
     total = d["wins"] + d["losses"]
     wr = f"{(d['wins']/total*100):.0f}%" if total > 0 else "0%"
-    sheets.call(sheets.ws_scrim_players.update, f"A{idx}:F{idx}", [[d["name"], d["wins"], d["losses"], wr, d["streak"], d["last_match"]]])
     d_copy = dict(d); d_copy["winrate"] = wr
     cache.scrims[d["name"].lower()] = {"row": idx, "data": d_copy}
+    return [d["name"], d["wins"], d["losses"], wr, d["streak"], d["last_match"]]
 
 def get_scrim5_player(name):
     if not cache.loaded_scrims5: cache.load_scrims5()
@@ -274,35 +303,83 @@ def create_scrim5_player(name):
     sheets.call(sheets.ws_scrim5_players.append_row, [name, 0, 0, "0%", 0, ""])
     cache.loaded_scrims5 = False
 
-def update_scrim5_player(idx, d):
+def update_scrim5_player_cache(idx, d):
+    """Solo actualiza cache, NO escribe a Sheets (para batch)."""
     total = d["wins"] + d["losses"]
     wr = f"{(d['wins']/total*100):.0f}%" if total > 0 else "0%"
-    sheets.call(sheets.ws_scrim5_players.update, f"A{idx}:F{idx}", [[d["name"], d["wins"], d["losses"], wr, d["streak"], d["last_match"]]])
     d_copy = dict(d); d_copy["winrate"] = wr
     cache.scrims5[d["name"].lower()] = {"row": idx, "data": d_copy}
+    return [d["name"], d["wins"], d["losses"], wr, d["streak"], d["last_match"]]
 
-def update_h2h(ws, p1, p2, winner):
-    recs = sheets.call(ws.get_all_values)
-    a, b = sorted([p1.lower(), p2.lower()])
-    for i, row in enumerate(recs[1:], start=2):
-        if row[0].lower() == a and row[1].lower() == b:
-            w1, w2 = int(row[2] or 0), int(row[3] or 0)
-            if winner.lower() == a: w1 += 1
-            else: w2 += 1
-            sheets.call(ws.update, f"C{i}:D{i}", [[w1, w2]])
-            return
-    sheets.call(ws.append_row, [a, b, 1 if winner.lower() == a else 0, 1 if winner.lower() == b else 0])
+# ── H2H batch helpers ─────────────────────────────────────────────────────────
 
-def revert_h2h(ws, p1, p2, winner):
+def update_h2h_batch(ws, pairs_winners):
+    """Actualiza TODOS los H2H de una partida en batch.
+    pairs_winners = list of (p1, p2, winner)
+    Lee la hoja UNA vez, calcula cambios, escribe UNA vez."""
     recs = sheets.call(ws.get_all_values)
-    a, b = sorted([p1.lower(), p2.lower()])
+    existing = {}
     for i, row in enumerate(recs[1:], start=2):
-        if row[0].lower() == a and row[1].lower() == b:
-            w1, w2 = int(row[2] or 0), int(row[3] or 0)
-            if winner.lower() == a: w1 = max(0, w1 - 1)
-            else: w2 = max(0, w2 - 1)
-            sheets.call(ws.update, f"C{i}:D{i}", [[w1, w2]])
-            return
+        if len(row) >= 4:
+            key = (row[0].lower(), row[1].lower())
+            existing[key] = {"row": i, "w1": int(row[2] or 0), "w2": int(row[3] or 0)}
+
+    updates = []
+    new_rows = []
+    for p1, p2, winner in pairs_winners:
+        a, b = sorted([p1.lower(), p2.lower()])
+        key = (a, b)
+        if key in existing:
+            e = existing[key]
+            if winner.lower() == a:
+                e["w1"] += 1
+            else:
+                e["w2"] += 1
+            e["dirty"] = True
+        else:
+            w1 = 1 if winner.lower() == a else 0
+            w2 = 1 if winner.lower() == b else 0
+            existing[key] = {"row": None, "w1": w1, "w2": w2, "dirty": False}
+            new_rows.append([a, b, w1, w2])
+
+    for key, e in existing.items():
+        if e.get("dirty") and e["row"]:
+            updates.append({"range": f"C{e['row']}:D{e['row']}", "values": [[e["w1"], e["w2"]]]})
+
+    if updates:
+        sheets.call(sheets.batch_update_cells, ws, updates)
+    if new_rows:
+        sheets.call(sheets.batch_append_rows, ws, new_rows)
+
+def revert_h2h_batch(ws, pairs_winners):
+    """Revierte H2H en batch."""
+    recs = sheets.call(ws.get_all_values)
+    existing = {}
+    for i, row in enumerate(recs[1:], start=2):
+        if len(row) >= 4:
+            key = (row[0].lower(), row[1].lower())
+            existing[key] = {"row": i, "w1": int(row[2] or 0), "w2": int(row[3] or 0)}
+
+    updates = []
+    for p1, p2, winner in pairs_winners:
+        a, b = sorted([p1.lower(), p2.lower()])
+        key = (a, b)
+        if key in existing:
+            e = existing[key]
+            if winner.lower() == a:
+                e["w1"] = max(0, e["w1"] - 1)
+            else:
+                e["w2"] = max(0, e["w2"] - 1)
+            e["dirty"] = True
+
+    for key, e in existing.items():
+        if e.get("dirty") and e["row"]:
+            updates.append({"range": f"C{e['row']}:D{e['row']}", "values": [[e["w1"], e["w2"]]]})
+
+    if updates:
+        sheets.call(sheets.batch_update_cells, ws, updates)
+
+# ── Single H2H read (para /vs command) ───────────────────────────────────────
 
 def get_h2h(ws, p1, p2):
     a, b = sorted([p1.lower(), p2.lower()])
@@ -311,6 +388,8 @@ def get_h2h(ws, p1, p2):
         if row[0].lower() == a and row[1].lower() == b:
             return int(row[2] or 0), int(row[3] or 0)
     return 0, 0
+
+# ── Logging ───────────────────────────────────────────────────────────────────
 
 def log_ranked(raw_w, raw_l, elo_changes, afk_players, url):
     sheets.call(sheets.ws_ranked_log.append_row, [
@@ -326,6 +405,8 @@ def log_scrim5(raw_w, raw_l, afk_players, url):
     sheets.call(sheets.ws_scrim5_log.append_row, [
         datetime.now().strftime("%Y-%m-%d %H:%M"), ", ".join(raw_w), ", ".join(raw_l),
         ", ".join(afk_players) if afk_players else "No", url])
+
+# ── Leaderboards ──────────────────────────────────────────────────────────────
 
 def get_top_ranked(n=10):
     if not cache.loaded_ranked: cache.load_ranked()
@@ -404,16 +485,13 @@ async def analyze_screenshot(image_bytes, team_size=3):
             return {"error": "Could not parse response / No pude interpretar la respuesta"}
         if "error" in data:
             return data
-
         winner_side = data.get("winner", "left")
         center      = data.get("center_word", "").lower()
         left, right = data.get("left_team", []), data.get("right_team", [])
-
         if "surr" in center or "rend" in center:
             lk, rk = data.get("left_kills", 0), data.get("right_kills", 0)
             if lk > rk:   winner_side = "left"
             elif rk > lk: winner_side = "right"
-
         w = left  if winner_side == "left" else right
         l = right if winner_side == "left" else left
         return {"winner_team": w, "loser_team": l,
@@ -422,7 +500,7 @@ async def analyze_screenshot(image_bytes, team_size=3):
     except Exception as e:
         return {"error": str(e)}
 
-# ── ELO logic ─────────────────────────────────────────────────────────────────
+# ── Ranked processing ─────────────────────────────────────────────────────────
 
 async def _ensure_player(name):
     result = await asyncio.to_thread(get_player, name)
@@ -450,6 +528,9 @@ async def process_ranked(winner_team, loser_team, afk_players, url):
     avg_l = sum(pd[p][1]["elo"] for p in cl) / len(cl)
     eg, el = calc_elo(avg_w, avg_l)
 
+    # Preparar batch de updates para Players
+    player_updates = []
+
     for name in cw:
         idx, d = pd[name]
         old = d["elo"]
@@ -460,7 +541,9 @@ async def process_ranked(winner_team, loser_team, afk_players, url):
         d["last_match"]  = now
         d["last_rival"]  = ", ".join(cl)
         changes[name] = {"old": old, "new": d["elo"], "diff": d["elo"] - old}
-        await asyncio.to_thread(update_player, idx, d)
+        player_updates.append({"range": f"A{idx}:H{idx}", "values": [[
+            d["name"], d["elo"], d["rank"], d["wins"], d["losses"], d["streak"], d["last_rival"], d["last_match"]]]})
+        cache.ranked[d["name"].lower()] = {"row": idx, "data": dict(d)}
 
     hay_afk = any(n.lower() in afk_set for n in cl)
     for name in cl:
@@ -480,11 +563,18 @@ async def process_ranked(winner_team, loser_team, afk_players, url):
             d["elo"]  = max(MIN_ELO, old - el)
             d["rank"] = get_rank(d["elo"])
             changes[name] = {"old": old, "new": d["elo"], "diff": d["elo"] - old}
-        await asyncio.to_thread(update_player, idx, d)
+        player_updates.append({"range": f"A{idx}:H{idx}", "values": [[
+            d["name"], d["elo"], d["rank"], d["wins"], d["losses"], d["streak"], d["last_rival"], d["last_match"]]]})
+        cache.ranked[d["name"].lower()] = {"row": idx, "data": dict(d)}
 
-    for w in cw:
-        for l in cl:
-            await asyncio.to_thread(update_h2h, sheets.ws_h2h, w, l, w)
+    # 1 batch write para todos los jugadores
+    await asyncio.to_thread(sheets.call, sheets.batch_update_cells, sheets.ws_players, player_updates)
+
+    # 1 batch para H2H
+    h2h_pairs = [(w, l, w) for w in cw for l in cl]
+    await asyncio.to_thread(update_h2h_batch, sheets.ws_h2h, h2h_pairs)
+
+    # 1 write para log
     await asyncio.to_thread(log_ranked, raw_w, raw_l, changes, afk_players, url)
     return changes, None
 
@@ -501,6 +591,8 @@ async def revert_ranked(cw, cl, afk_players):
     avg_l = sum(pd[p][1]["elo"] for p in valid_l) / max(len(valid_l), 1)
     eg, el = calc_elo(avg_w, avg_l)
     hay_afk = any(n.lower() in afk_set for n in cl)
+
+    player_updates = []
     for name in cw:
         if name not in pd: continue
         idx, d = pd[name]
@@ -508,7 +600,9 @@ async def revert_ranked(cw, cl, afk_players):
         d["rank"]  = get_rank(d["elo"])
         d["wins"]  = max(0, d["wins"] - 1)
         d["streak"] = 0
-        await asyncio.to_thread(update_player, idx, d)
+        player_updates.append({"range": f"A{idx}:H{idx}", "values": [[
+            d["name"], d["elo"], d["rank"], d["wins"], d["losses"], d["streak"], d.get("last_rival",""), d.get("last_match","")]]})
+        cache.ranked[d["name"].lower()] = {"row": idx, "data": dict(d)}
     for name in cl:
         if name not in pd: continue
         idx, d = pd[name]
@@ -520,12 +614,18 @@ async def revert_ranked(cw, cl, afk_players):
         elif not hay_afk:
             d["elo"]  = min(MAX_ELO, d["elo"] + el)
             d["rank"] = get_rank(d["elo"])
-        await asyncio.to_thread(update_player, idx, d)
-    for w in cw:
-        for l in cl:
-            await asyncio.to_thread(revert_h2h, sheets.ws_h2h, w, l, w)
+        player_updates.append({"range": f"A{idx}:H{idx}", "values": [[
+            d["name"], d["elo"], d["rank"], d["wins"], d["losses"], d["streak"], d.get("last_rival",""), d.get("last_match","")]]})
+        cache.ranked[d["name"].lower()] = {"row": idx, "data": dict(d)}
 
-# ── Scrims processing ─────────────────────────────────────────────────────────
+    if player_updates:
+        await asyncio.to_thread(sheets.call, sheets.batch_update_cells, sheets.ws_players, player_updates)
+
+    h2h_pairs = [(w, l, w) for w in cw for l in cl if w in pd and l in pd]
+    if h2h_pairs:
+        await asyncio.to_thread(revert_h2h_batch, sheets.ws_h2h, h2h_pairs)
+
+# ── Scrims processing (batch) ─────────────────────────────────────────────────
 
 async def _ensure_player_scrim(name):
     result = await asyncio.to_thread(get_scrim_player, name)
@@ -549,49 +649,78 @@ async def process_scrims(winner_team, loser_team, afk_players, url, mode="3v3"):
     cl    = [clean_name(p) for p in raw_l]
     is_5v5 = (mode == "5v5")
     ensure_func = _ensure_player_scrim5 if is_5v5 else _ensure_player_scrim
-    update_func = update_scrim5_player if is_5v5 else update_scrim_player
+    cache_func  = update_scrim5_player_cache if is_5v5 else update_scrim_player_cache
+    player_ws   = sheets.ws_scrim5_players if is_5v5 else sheets.ws_scrim_players
     h2h_ws      = sheets.ws_scrim5_h2h if is_5v5 else sheets.ws_scrim_h2h
     log_func    = log_scrim5 if is_5v5 else log_scrim
 
+    # Asegurar que todos los jugadores existen (puede crear nuevos)
+    player_data = {}
+    for name in cw + cl:
+        player_data[name] = await ensure_func(name)
+
+    # Calcular cambios en memoria
+    player_updates = []
     for name in cw:
-        idx, d = await ensure_func(name)
+        idx, d = player_data[name]
         d["wins"]  += 1
         d["streak"] = max(1, d["streak"] + 1) if d["streak"] >= 0 else 1
         d["last_match"] = now
-        await asyncio.to_thread(update_func, idx, d)
+        row_values = cache_func(idx, d)
+        player_updates.append({"range": f"A{idx}:F{idx}", "values": [row_values]})
+
     for name in cl:
-        idx, d = await ensure_func(name)
+        idx, d = player_data[name]
         d["losses"] += 1
         d["streak"]  = min(-1, d["streak"] - 1) if d["streak"] <= 0 else -1
         d["last_match"] = now
-        await asyncio.to_thread(update_func, idx, d)
-    for w in cw:
-        for l in cl:
-            await asyncio.to_thread(update_h2h, h2h_ws, w, l, w)
+        row_values = cache_func(idx, d)
+        player_updates.append({"range": f"A{idx}:F{idx}", "values": [row_values]})
+
+    # 1 batch write para todos los jugadores
+    await asyncio.to_thread(sheets.call, sheets.batch_update_cells, player_ws, player_updates)
+
+    # 1 batch para H2H
+    h2h_pairs = [(w, l, w) for w in cw for l in cl]
+    await asyncio.to_thread(update_h2h_batch, h2h_ws, h2h_pairs)
+
+    # 1 write para log
     await asyncio.to_thread(log_func, raw_w, raw_l, afk_players, url)
 
 async def revert_scrims(cw, cl, afk_players, mode="3v3"):
     is_5v5 = (mode == "5v5")
-    get_func    = get_scrim5_player if is_5v5 else get_scrim_player
-    update_func = update_scrim5_player if is_5v5 else update_scrim_player
-    h2h_ws      = sheets.ws_scrim5_h2h if is_5v5 else sheets.ws_scrim_h2h
+    get_func   = get_scrim5_player if is_5v5 else get_scrim_player
+    cache_func = update_scrim5_player_cache if is_5v5 else update_scrim_player_cache
+    player_ws  = sheets.ws_scrim5_players if is_5v5 else sheets.ws_scrim_players
+    h2h_ws     = sheets.ws_scrim5_h2h if is_5v5 else sheets.ws_scrim_h2h
+
+    player_updates = []
+    valid_cw, valid_cl = [], []
     for name in cw:
         r = await asyncio.to_thread(get_func, name)
         if not r: continue
         idx, d = r
         d["wins"]   = max(0, d["wins"] - 1)
         d["streak"] = 0
-        await asyncio.to_thread(update_func, idx, d)
+        row_values = cache_func(idx, d)
+        player_updates.append({"range": f"A{idx}:F{idx}", "values": [row_values]})
+        valid_cw.append(name)
     for name in cl:
         r = await asyncio.to_thread(get_func, name)
         if not r: continue
         idx, d = r
         d["losses"] = max(0, d["losses"] - 1)
         d["streak"] = 0
-        await asyncio.to_thread(update_func, idx, d)
-    for w in cw:
-        for l in cl:
-            await asyncio.to_thread(revert_h2h, h2h_ws, w, l, w)
+        row_values = cache_func(idx, d)
+        player_updates.append({"range": f"A{idx}:F{idx}", "values": [row_values]})
+        valid_cl.append(name)
+
+    if player_updates:
+        await asyncio.to_thread(sheets.call, sheets.batch_update_cells, player_ws, player_updates)
+
+    h2h_pairs = [(w, l, w) for w in valid_cw for l in valid_cl]
+    if h2h_pairs:
+        await asyncio.to_thread(revert_h2h_batch, h2h_ws, h2h_pairs)
 
 # ── Embeds ────────────────────────────────────────────────────────────────────
 
@@ -627,7 +756,6 @@ def build_scrim_embed(winner_team, loser_team, afk_players, url, footer, mode="3
     color = 0xFFD700 if mode == "3v3" else 0x8844FF
 
     if mode == "5v5":
-        # Embed compacto para 5v5 usando description en vez de fields
         cw = [clean_name(p) for p in winner_team if "guest" not in p.lower()]
         cl = [clean_name(p) for p in loser_team  if "guest" not in p.lower()]
         lines = []
@@ -641,16 +769,13 @@ def build_scrim_embed(winner_team, loser_team, afk_players, url, footer, mode="3
             lines.append(f"**AFK:** {', '.join(clean_name(p) for p in afk_players)}")
         embed = discord.Embed(
             title=f"⚔️ Scrim {label} registered / Scrim {label} registrado",
-            description="\n".join(lines),
-            color=color)
+            description="\n".join(lines), color=color)
         embed.set_thumbnail(url=url)
         embed.set_footer(text=footer)
         return embed
 
-    # 3v3 - formato original con fields
     embed = discord.Embed(
-        title=f"⚔️ Scrim {label} registered / Scrim {label} registrado",
-        color=color)
+        title=f"⚔️ Scrim {label} registered / Scrim {label} registrado", color=color)
     wn = "\n".join(f"🟢 **{clean_name(p)}**" for p in winner_team if "guest" not in p.lower())
     ln = "\n".join(f"🔴 **{clean_name(p)}**" for p in loser_team  if "guest" not in p.lower())
     embed.add_field(name="🏅 Winners / Ganadores", value=wn or "-", inline=True)
@@ -753,7 +878,6 @@ class MatchView(View):
         edit = Button(label="✏️ Edit", style=discord.ButtonStyle.secondary, custom_id=f"{self.view_id}_edit")
         edit.callback = self.edit_callback
         self.add_item(edit)
-        # AFK buttons solo en ranked (scrims no tienen ELO)
         if self.mode == "ranked":
             for i, name in enumerate(self._loser_names[:3]):
                 is_active = name.lower() in self.manual_afk
@@ -908,11 +1032,9 @@ async def on_message(message):
     ch = message.channel.name
     if ch not in [RANKED_CHANNEL, SCRIMS_3V3_CHANNEL, SCRIMS_5V5_CHANNEL]:
         await bot.process_commands(message); return
-
     img_att = next((a for a in message.attachments if a.content_type and a.content_type.startswith("image/")), None)
     if not img_att:
         await bot.process_commands(message); return
-
     if ch == RANKED_CHANNEL:
         mode, scrim_mode, team_size = "ranked", "3v3", 3
     elif ch == SCRIMS_3V3_CHANNEL:
@@ -931,7 +1053,6 @@ async def on_message(message):
         result = await analyze_screenshot(await img_att.read(), team_size=team_size)
         if "error" in result:
             await proc.edit(content=f"❌ {result['error']}"); return
-
         wt, lt = result["winner_team"], result["loser_team"]
         afk    = result.get("afk_players", [])
         guests = result.get("has_guests", False)
@@ -1054,7 +1175,7 @@ async def anular_cmd(interaction: discord.Interaction):
     await interaction.response.send_message(
         "🔄 **Swap** = invertir ganadores/perdedores (reutilizable)\n"
         "✏️ **Edit** = corregir nombres mal leídos por la IA (abre formulario)\n"
-        "💤 **AFK [nombre]** = marcar/desmarcar jugador como AFK (toggle, protege ELO)\n"
+        "💤 **AFK [nombre]** = marcar/desmarcar jugador como AFK (toggle, protege ELO) — solo ranked\n"
         "🗑️ **Delete** = eliminar partida permanentemente\n\n"
         "Swap, Edit y AFK se pueden usar varias veces. Delete es final.", ephemeral=True)
 
