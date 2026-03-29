@@ -16,6 +16,7 @@
   --bronze: #b07340;
   --green: #4ade80;
   --red: #f87171;
+  --purple: #a78bfa;
   --text: #e8e6df;
   --text2: #989690;
   --text3: #5c5b57;
@@ -113,7 +114,7 @@ body {
   flex: 1;
   text-align: center;
   padding: 10px 0;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   font-weight: 500;
   color: var(--text3);
   cursor: pointer;
@@ -129,6 +130,43 @@ body {
 }
 
 .tab:hover:not(.active) { color: var(--text2); }
+
+.sub-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 16px;
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 3px;
+  border: 1px solid var(--border);
+}
+
+.sub-tab {
+  flex: 1;
+  text-align: center;
+  padding: 8px 0;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text3);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.3s ease;
+  letter-spacing: 0.5px;
+}
+
+.sub-tab.active {
+  background: var(--bg3);
+  color: var(--gold);
+  font-weight: 600;
+}
+
+.sub-tab.active-purple {
+  background: var(--bg3);
+  color: var(--purple);
+  font-weight: 600;
+}
+
+.sub-tab:hover:not(.active):not(.active-purple) { color: var(--text2); }
 
 .section-label {
   font-size: 0.65rem;
@@ -162,6 +200,7 @@ body {
 .player-row.top1 { border-left: 3px solid var(--gold); }
 .player-row.top2 { border-left: 3px solid var(--silver); }
 .player-row.top3 { border-left: 3px solid var(--bronze); }
+.player-row.top1-purple { border-left: 3px solid var(--purple); }
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
@@ -180,6 +219,7 @@ body {
 .rank-num.r1 { color: var(--gold); }
 .rank-num.r2 { color: var(--silver); }
 .rank-num.r3 { color: var(--bronze); }
+.rank-num.r1-purple { color: var(--purple); }
 
 .player-info {
   flex: 1;
@@ -220,7 +260,6 @@ body {
   margin-top: 2px;
 }
 
-/* Rank tier colors */
 .elo-rank.rank-t10 { color: var(--gold); }
 .elo-rank.rank-t9  { color: var(--silver); }
 .elo-rank.rank-t8  { color: var(--bronze); }
@@ -469,33 +508,41 @@ body {
 <div class="container">
   <div class="header">
     <h1>Vainglory<br>Ranking NA</h1>
-    <div class="subtitle">3v3 competitive rankings</div>
+    <div class="subtitle">competitive rankings</div>
     <div class="live-text"><span class="live-dot"></span>Live — auto-updates every 60s</div>
   </div>
 
   <div class="tabs">
-    <div class="tab active" onclick="showTab('ranked')">Ranked</div>
-    <div class="tab" onclick="showTab('scrims')">Scrims</div>
-    <div class="tab" onclick="showTab('h2h')">Head to head</div>
+    <div class="tab active" onclick="showTab('ranked')">Ranked 3v3</div>
+    <div class="tab" onclick="showTab('private')">Private Matches</div>
+    <div class="tab" onclick="showTab('h2h')">Head to Head</div>
   </div>
 
+  <!-- RANKED 3v3 -->
   <div id="tab-ranked" class="tab-content active">
     <div class="section-label">ELO ranking</div>
     <div id="ranked-list"><div class="loading"><div class="spinner"></div>Loading...</div></div>
   </div>
 
-  <div id="tab-scrims" class="tab-content">
-    <div class="section-label">Scrims — by wins</div>
-    <div id="scrims-list"><div class="loading"><div class="spinner"></div>Loading...</div></div>
+  <!-- PRIVATE MATCHES -->
+  <div id="tab-private" class="tab-content">
+    <div class="sub-tabs">
+      <div class="sub-tab active" onclick="setPrivateMode('3v3')">3v3</div>
+      <div class="sub-tab" onclick="setPrivateMode('5v5')">5v5</div>
+    </div>
+    <div class="section-label" id="private-label">3v3 — by wins</div>
+    <div id="private-list"><div class="loading"><div class="spinner"></div>Loading...</div></div>
   </div>
 
+  <!-- HEAD TO HEAD -->
   <div id="tab-h2h" class="tab-content">
     <div class="section-label">Head-to-head search</div>
     <div class="h2h-card">
       <div class="h2h-mode-toggle">
         <div class="h2h-mode active" onclick="setH2HMode('ranked')">Ranked</div>
-        <div class="h2h-mode" onclick="setH2HMode('scrims')">Scrims</div>
-        <div class="h2h-mode" onclick="setH2HMode('both')">Both</div>
+        <div class="h2h-mode" onclick="setH2HMode('3v3')">3v3</div>
+        <div class="h2h-mode" onclick="setH2HMode('5v5')">5v5</div>
+        <div class="h2h-mode" onclick="setH2HMode('all')">All</div>
       </div>
       <div class="h2h-inputs">
         <div class="autocomplete-wrap">
@@ -519,6 +566,7 @@ body {
 <script>
 const SHEET_ID = '1xAeP5YFnkME0G5jCZPBy0H3QpgJZBEaCYJyuNDn3Fdw';
 let h2hMode = 'ranked';
+let privateMode = '3v3';
 let allPlayerNames = [];
 
 function sheetURL(tab) {
@@ -568,7 +616,7 @@ async function loadRanked() {
     const w = Number(p.Wins || 0), l = Number(p.Losses || 0), t = w + l;
     const wr = t > 0 ? ((w / t) * 100).toFixed(1) : '0.0';
     const streak = Number(p.Streak || 0);
-    const streakStr = streak > 0 ? `🔥${streak}W` : streak < 0 ? `❄️ ${Math.abs(streak)}L` : '—';
+    const streakStr = streak > 0 ? `🔥${streak}W` : streak < 0 ? `❄️${Math.abs(streak)}L` : '—';
     const lastRival = p.LastRival || p['Last Rival'] || '';
     const lastMatch = p.LastMatch || p['Last Match'] || '';
     const extra = [streakStr, lastRival ? `vs ${lastRival}` : '', lastMatch].filter(Boolean).join(' · ');
@@ -590,20 +638,30 @@ async function loadRanked() {
   }).join('');
 }
 
-async function loadScrims() {
-  const rows = await fetchSheet('ScrimPlayers');
-  const el = document.getElementById('scrims-list');
-  if (!rows.length) { el.innerHTML = '<div class="loading">No scrim players yet</div>'; return; }
+async function loadPrivate(mode) {
+  const sheetName = mode === '5v5' ? 'ScrimPlayers5v5' : 'ScrimPlayers';
+  const rows = await fetchSheet(sheetName);
+  const el = document.getElementById('private-list');
+  const label = document.getElementById('private-label');
+  label.textContent = `${mode} — by wins`;
+
+  if (!rows.length) { el.innerHTML = '<div class="loading">No players yet</div>'; return; }
   const sorted = rows.filter(r => r.Player).sort((a, b) => Number(b.Wins||0) - Number(a.Wins||0));
+  const is5 = mode === '5v5';
+
   el.innerHTML = sorted.map((p, i) => {
     const w = Number(p.Wins||0), l = Number(p.Losses||0), t = w + l;
     const wr = t > 0 ? ((w/t)*100).toFixed(0) : '0';
     const streak = Number(p.Streak || 0);
-    const streakStr = streak > 0 ? `🔥${streak}W` : streak < 0 ? `❄️ ${Math.abs(streak)}L` : '—';
+    const streakStr = streak > 0 ? `🔥${streak}W` : streak < 0 ? `❄️${Math.abs(streak)}L` : '—';
     const lastMatch = p.LastMatch || p['Last Match'] || '';
     const extra = [streakStr, lastMatch].filter(Boolean).join(' · ');
-    const tc = i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : '';
-    const rc = i === 0 ? 'r1' : i === 1 ? 'r2' : i === 2 ? 'r3' : '';
+    const tc = is5
+      ? (i === 0 ? 'top1-purple' : i === 1 ? 'top2' : i === 2 ? 'top3' : '')
+      : (i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : '');
+    const rc = is5
+      ? (i === 0 ? 'r1-purple' : i === 1 ? 'r2' : i === 2 ? 'r3' : '')
+      : (i === 0 ? 'r1' : i === 1 ? 'r2' : i === 2 ? 'r3' : '');
     return `<div class="player-row ${tc}" style="animation-delay:${i*0.05}s">
       <div class="rank-num ${rc}">${i+1}</div>
       <div class="player-info">
@@ -615,11 +673,27 @@ async function loadScrims() {
   }).join('');
 }
 
+function setPrivateMode(mode) {
+  privateMode = mode;
+  document.querySelectorAll('#tab-private .sub-tab').forEach(t => {
+    t.classList.remove('active', 'active-purple');
+  });
+  const tabs = document.querySelectorAll('#tab-private .sub-tab');
+  if (mode === '3v3') { tabs[0].classList.add('active'); }
+  else { tabs[1].classList.add('active-purple'); }
+  loadPrivate(mode);
+}
+
 async function loadAllPlayerNames() {
-  const [ranked, scrims] = await Promise.all([fetchSheet('Players'), fetchSheet('ScrimPlayers')]);
+  const [ranked, scrims, scrims5] = await Promise.all([
+    fetchSheet('Players'),
+    fetchSheet('ScrimPlayers'),
+    fetchSheet('ScrimPlayers5v5')
+  ]);
   const names = new Set();
   ranked.forEach(r => r.Player && names.add(r.Player));
   scrims.forEach(r => r.Player && names.add(r.Player));
+  scrims5.forEach(r => r.Player && names.add(r.Player));
   allPlayerNames = [...names].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 }
 
@@ -661,7 +735,7 @@ function setupAutocomplete(inputId, listId) {
         input.value = items[activeIdx].dataset.val;
         list.classList.remove('open');
         e.preventDefault();
-      } else if (inputId === 'h2h-p1' || inputId === 'h2h-p2') {
+      } else {
         searchH2H();
       }
     } else if (e.key === 'Escape') {
@@ -683,9 +757,9 @@ async function searchH2H() {
   const rd = document.getElementById('h2h-result');
   if (!p1 || !p2) { rd.innerHTML = '<div class="h2h-no-data">Enter both player names</div>'; rd.classList.add('visible'); return; }
   const [s1, s2] = [p1, p2].sort();
-  let rw1=0, rw2=0, sw1=0, sw2=0;
+  let rw1=0, rw2=0, sw1=0, sw2=0, s5w1=0, s5w2=0;
 
-  if (h2hMode === 'ranked' || h2hMode === 'both') {
+  if (h2hMode === 'ranked' || h2hMode === 'all') {
     const rows = await fetchSheet('H2H');
     for (const row of rows) {
       if (row.Player1 && row.Player2 && row.Player1.toLowerCase()===s1 && row.Player2.toLowerCase()===s2) {
@@ -694,7 +768,7 @@ async function searchH2H() {
     }
   }
 
-  if (h2hMode === 'scrims' || h2hMode === 'both') {
+  if (h2hMode === '3v3' || h2hMode === 'all') {
     const rows = await fetchSheet('ScrimH2H');
     for (const row of rows) {
       if (row.Player1 && row.Player2 && row.Player1.toLowerCase()===s1 && row.Player2.toLowerCase()===s2) {
@@ -703,19 +777,30 @@ async function searchH2H() {
     }
   }
 
+  if (h2hMode === '5v5' || h2hMode === 'all') {
+    const rows = await fetchSheet('ScrimH2H5v5');
+    for (const row of rows) {
+      if (row.Player1 && row.Player2 && row.Player1.toLowerCase()===s1 && row.Player2.toLowerCase()===s2) {
+        s5w1 = Number(row.Wins1||0); s5w2 = Number(row.Wins2||0); break;
+      }
+    }
+  }
+
   let w1, w2, label;
   if (h2hMode === 'ranked') { w1=rw1; w2=rw2; label='Ranked'; }
-  else if (h2hMode === 'scrims') { w1=sw1; w2=sw2; label='Scrims'; }
-  else { w1=rw1+sw1; w2=rw2+sw2; label='All modes'; }
+  else if (h2hMode === '3v3') { w1=sw1; w2=sw2; label='Private 3v3'; }
+  else if (h2hMode === '5v5') { w1=s5w1; w2=s5w2; label='Private 5v5'; }
+  else { w1=rw1+sw1+s5w1; w2=rw2+sw2+s5w2; label='All modes'; }
 
   const total = w1 + w2;
   if (total === 0) { rd.innerHTML = '<div class="h2h-no-data">No matches found between these players</div>'; rd.classList.add('visible'); return; }
 
   let breakdown = '';
-  if (h2hMode === 'both') {
+  if (h2hMode === 'all') {
     const parts = [];
     if (rw1+rw2 > 0) parts.push(`Ranked: ${rw1}-${rw2}`);
-    if (sw1+sw2 > 0) parts.push(`Scrims: ${sw1}-${sw2}`);
+    if (sw1+sw2 > 0) parts.push(`3v3: ${sw1}-${sw2}`);
+    if (s5w1+s5w2 > 0) parts.push(`5v5: ${s5w1}-${s5w2}`);
     breakdown = `<div style="display:flex;justify-content:center;gap:24px;margin-top:12px;font-size:0.7rem;color:var(--text3)">${parts.map(p=>`<span>${p}</span>`).join('')}</div>`;
   }
 
@@ -735,17 +820,18 @@ function showTab(tab) {
   document.getElementById(`tab-${tab}`).classList.add('active');
   const tabs = document.querySelectorAll('.tabs .tab');
   if (tab==='ranked') tabs[0].classList.add('active');
-  else if (tab==='scrims') tabs[1].classList.add('active');
+  else if (tab==='private') { tabs[1].classList.add('active'); loadPrivate(privateMode); }
   else tabs[2].classList.add('active');
 }
 
+// Initial load
 loadRanked();
-loadScrims();
+loadPrivate('3v3');
 loadAllPlayerNames().then(() => {
   setupAutocomplete('h2h-p1', 'ac-list-1');
   setupAutocomplete('h2h-p2', 'ac-list-2');
 });
-setInterval(() => { loadRanked(); loadScrims(); }, 60000);
+setInterval(() => { loadRanked(); loadPrivate(privateMode); }, 60000);
 </script>
 </body>
 </html>
