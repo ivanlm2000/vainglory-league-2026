@@ -729,13 +729,15 @@ class MatchView(View):
         edit = Button(label="✏️ Edit", style=discord.ButtonStyle.secondary, custom_id=f"{self.view_id}_edit")
         edit.callback = self.edit_callback
         self.add_item(edit)
-        for i, name in enumerate(self._loser_names[:3]):
-            is_active = name.lower() in self.manual_afk
-            label = f"💤 {name}" if not is_active else f"✅ {name} AFK"
-            style = discord.ButtonStyle.primary if not is_active else discord.ButtonStyle.success
-            btn = Button(label=label, style=style, custom_id=f"{self.view_id}_afk_{i}")
-            btn.callback = self._make_afk_callback(i, name)
-            self.add_item(btn)
+        # AFK buttons solo en ranked (scrims no tienen ELO)
+        if self.mode == "ranked":
+            for i, name in enumerate(self._loser_names[:3]):
+                is_active = name.lower() in self.manual_afk
+                label = f"💤 {name}" if not is_active else f"✅ {name} AFK"
+                style = discord.ButtonStyle.primary if not is_active else discord.ButtonStyle.success
+                btn = Button(label=label, style=style, custom_id=f"{self.view_id}_afk_{i}")
+                btn.callback = self._make_afk_callback(i, name)
+                self.add_item(btn)
         delete = Button(label="🗑️ Delete", style=discord.ButtonStyle.danger, custom_id=f"{self.view_id}_delete")
         delete.callback = self.delete_callback
         self.add_item(delete)
