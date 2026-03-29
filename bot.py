@@ -624,9 +624,33 @@ def build_ranked_embed(winner_team, loser_team, changes, afk_players, url, foote
 
 def build_scrim_embed(winner_team, loser_team, afk_players, url, footer, mode="3v3"):
     label = "3v3" if mode == "3v3" else "5v5"
+    color = 0xFFD700 if mode == "3v3" else 0x8844FF
+
+    if mode == "5v5":
+        # Embed compacto para 5v5 usando description en vez de fields
+        cw = [clean_name(p) for p in winner_team if "guest" not in p.lower()]
+        cl = [clean_name(p) for p in loser_team  if "guest" not in p.lower()]
+        lines = []
+        lines.append("**Winners / Ganadores**")
+        lines.append(", ".join(cw) if cw else "-")
+        lines.append("")
+        lines.append("**Losers / Perdedores**")
+        lines.append(", ".join(cl) if cl else "-")
+        if afk_players:
+            lines.append("")
+            lines.append(f"**AFK:** {', '.join(clean_name(p) for p in afk_players)}")
+        embed = discord.Embed(
+            title=f"⚔️ Scrim {label} registered / Scrim {label} registrado",
+            description="\n".join(lines),
+            color=color)
+        embed.set_thumbnail(url=url)
+        embed.set_footer(text=footer)
+        return embed
+
+    # 3v3 - formato original con fields
     embed = discord.Embed(
         title=f"⚔️ Scrim {label} registered / Scrim {label} registrado",
-        color=0xFFD700 if mode == "3v3" else 0x8844FF)
+        color=color)
     wn = "\n".join(f"🟢 **{clean_name(p)}**" for p in winner_team if "guest" not in p.lower())
     ln = "\n".join(f"🔴 **{clean_name(p)}**" for p in loser_team  if "guest" not in p.lower())
     embed.add_field(name="🏅 Winners / Ganadores", value=wn or "-", inline=True)
